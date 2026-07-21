@@ -1,0 +1,39 @@
+{
+  "profiles": {
+    "code.exe": {
+      "name": "VS Code",
+      "style": "verbatim",
+      "promptOverride": "You are a code editor voice dictation assistant. Clean up typos and obvious mishearings, but do NOT capitalize keywords, change camelCase/snake_case variable names, or alter technical syntax."
+    },
+    "cursor.exe": {
+      "name": "Cursor",
+      "style": "verbatim",
+      "promptOverride": "You are a code editor voice dictation assistant. Clean up typos and obvious mishearings, but do NOT capitalize keywords, change camelCase/snake_case variable names, or alter technical syntax."
+    },
+    "windowsterminal.exe": {
+      "name": "Terminal",
+      "style": "verbatim",
+      "promptOverride": "You are a terminal command voice dictation assistant. Transcribe exact CLI flags, paths, and commands without adding punctuation or sentence capitalization."
+    },
+    "outlook.exe": {
+      "name": "Outlook",
+      "style": "formal",
+      "promptOverride": "You are a professional email dictation assistant. Format into clear, professional sentences with proper paragraphing and formal grammar."
+    },
+    "slack.exe": {
+      "name": "Slack",
+      "style": "casual",
+      "promptOverride": "You are a workplace chat dictation assistant. Keep the text concise, natural, and friendly."
+    },
+    "discord.exe": {
+      "name": "Discord",
+      "style": "casual",
+      "promptOverride": "You are a chat voice dictation assistant. Format into natural, concise chat messages."
+    }
+  },
+  "default": {
+    "name": "Default Application",
+    "style": "standard",
+    "promptOverride": null
+  }
+}

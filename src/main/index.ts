@@ -1,8 +1,11 @@
 import { app, BrowserWindow, screen, ipcMain } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import started from 'electron-squirrel-startup';
 import { NativeBridge, CadenceMode } from './ipc/native-bridge';
+import { STTEngine } from './pipeline/stt';
+import { LLMEngine } from './pipeline/llm';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -20,6 +23,21 @@ let nativeBridge: NativeBridge | null = null;
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let audioWindow: BrowserWindow | null = null;
+
+// Pipeline engines
+const sttEngine = new STTEngine();
+const llmEngine = new LLMEngine();
+
+// App profiles config
+let profilesConfig: any = {};
+try {
+  const profilesPath = path.join(process.cwd(), 'config', 'profiles.json');
+  if (fs.existsSync(profilesPath)) {
+    profilesConfig = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+  }
+} catch (e) {
+  console.warn('[Cadence] Could not load profiles.json config:', e);
+}
 
 // Audio recording buffer (PCM 16-bit 16kHz)
 const audioChunks: Buffer[] = [];
@@ -173,17 +191,53 @@ app.on('ready', () => {
     // Transition overlay to processing state (blue looping animation)
     updateOverlayState('processing', mode);
 
-    // Get focused application name
+    // Get target foreground window info
     const fgApp = await nativeBridge?.getForegroundApp();
-    logApp(`[Cadence] Active target window: ${fgApp?.processName} ("${fgApp?.windowTitle}")`);
+    logApp(`[Cadence] Target window: ${fgApp?.processName} ("${fgApp?.windowTitle}")`);
 
-    // Perform text injection
-    const testText = mode === 'command'
-      ? ' [Cadence Command Mode Active] '
-      : ' [Cadence Dictation Active] ';
+    // Process audio buffer
+    if (audioChunks.length === 0) {
+      logApp('[Cadence] Audio buffer empty, skipping transcription.');
+      updateOverlayState('hidden');
+      return;
+    }
 
-    logApp(`[Cadence] Injecting text: "${testText}" into ${fgApp?.processName}`);
-    await nativeBridge?.injectText(testText);
+    const tempWavPath = path.join(os.tmpdir(), `cadence_rec_${Date.now()}.wav`);
+    sttEngine.saveWavFile(audioChunks, tempWavPath);
+
+    let resultText = '';
+
+    try {
+      // 1. Speech to text via whisper.cpp
+      const rawTranscript = await sttEngine.transcribe(tempWavPath);
+      logApp(`[Cadence] STT Raw output: "${rawTranscript}"`);
+
+      // 2. Resolve per-app profile prompt override
+      const appProcess = (fgApp?.processName || '').toLowerCase();
+      const profile = profilesConfig.profiles?.[`${appProcess}.exe`] || profilesConfig.profiles?.[appProcess] || profilesConfig.default;
+      const promptOverride = profile?.promptOverride;
+
+      // 3. LLM Cleanup / Command execution via Ollama
+      if (mode === 'command') {
+        resultText = await llmEngine.processCommand(rawTranscript, '');
+      } else {
+        resultText = await llmEngine.cleanDictation(rawTranscript, promptOverride);
+      }
+
+      logApp(`[Cadence] Final text to inject: "${resultText}"`);
+
+      // 4. Inject finalized text into focused application
+      if (resultText && resultText.trim()) {
+        await nativeBridge?.injectText(resultText);
+      }
+    } catch (err) {
+      logApp(`[Cadence] Pipeline processing error: ${err}`);
+    } finally {
+      // Clean up temp audio file
+      try {
+        if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath);
+      } catch (e) {}
+    }
 
     // Show done state briefly then hide
     updateOverlayState('done', mode);
