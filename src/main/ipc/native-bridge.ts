@@ -259,10 +259,12 @@ export class NativeBridge extends EventEmitter {
   }
 
   // Public methods to interact with native helper
-  public async injectText(text: string, useClipboard = false): Promise<void> {
+  public async injectText(text: string): Promise<void> {
     return new Promise((resolve) => {
       this.pendingRequests.set('inject', resolve);
-      this.send({ type: 'inject', text, useClipboard });
+      // Always use clipboard injection (Ctrl+V) — most reliable across all apps.
+      // C# side will SetForegroundWindow(storedHwnd) before pasting.
+      this.send({ type: 'inject', text, useClipboard: true });
     });
   }
 

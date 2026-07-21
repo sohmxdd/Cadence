@@ -15,7 +15,7 @@ export class LLMEngine {
     this.ollamaUrl = config?.ollamaUrl || 'http://localhost:11434';
     this.dictationModel = config?.dictationModel || 'gemma2:2b';
     this.commandModel = config?.commandModel || 'gemma2:2b';
-    this.timeoutMs = config?.timeoutMs || 25000; // 25s timeout for reliable Ollama inference
+    this.timeoutMs = config?.timeoutMs || 60000; // 60s timeout — local Ollama on CPU can be slow
   }
 
   public async cleanDictation(rawTranscript: string, promptOverride?: string): Promise<string> {

@@ -214,6 +214,13 @@ app.on('ready', () => {
     logApp(`⏹️ [HOTKEY UP] Released (${duration}ms hold). Processing speech...`);
     isRecording = false;
 
+    // *** CRITICAL: Capture foreground window HWND FIRST, before any overlay state
+    // changes or audio processing. This is the window that had focus when the user
+    // released the hotkey — it's our injection target. The C# helper stores the HWND
+    // internally and calls SetForegroundWindow() before injecting.
+    const fgApp = await nativeBridge?.getForegroundApp();
+    logApp(`[Target Window] ${fgApp?.processName} ("${fgApp?.windowTitle}")`);
+
     // Stop mic capture
     if (audioWindow && !audioWindow.isDestroyed()) {
       audioWindow.webContents.executeJavaScript('window.stopAudioCapture && window.stopAudioCapture()');
@@ -222,12 +229,8 @@ app.on('ready', () => {
     const totalBytesCaptured = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0);
     logApp(`Audio capture stopped, ${totalBytesCaptured} bytes captured`);
 
-    // Transition overlay to processing state ("Cleaning up…")
-    updateOverlayState('processing', mode, 'Cleaning up…');
-
-    // Get target foreground window info
-    const fgApp = await nativeBridge?.getForegroundApp();
-    logApp(`[Target Window] ${fgApp?.processName} ("${fgApp?.windowTitle}")`);
+    // Transition overlay to processing state
+    updateOverlayState('processing', mode);
 
     // Process audio buffer
     if (audioChunks.length === 0) {
@@ -263,11 +266,11 @@ app.on('ready', () => {
         resultText = await llmEngine.cleanDictation(rawTranscript, promptOverride);
       }
 
-      // 4. Inject finalized text into focused application
+      // 4. Inject finalized text — C# helper will restore window focus via stored HWND
       if (resultText && resultText.trim()) {
-        logApp(`SendInput called with text: "${resultText}"`);
+        logApp(`Injecting text (${resultText.length} chars): "${resultText.substring(0, 80)}${resultText.length > 80 ? '...' : ''}"`);
         await nativeBridge?.injectText(resultText);
-        updateOverlayState('done', mode, 'Done');
+        updateOverlayState('done', mode);
       } else {
         updateOverlayState('hidden');
       }
@@ -283,7 +286,7 @@ app.on('ready', () => {
     // Hide overlay window after brief delay
     setTimeout(() => {
       updateOverlayState('hidden');
-    }, 450);
+    }, 600);
   });
 
   nativeBridge.on('hotkey-cancel', () => {

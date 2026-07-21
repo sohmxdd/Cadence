@@ -8,8 +8,8 @@ namespace CadenceHelper;
 /// Cadence Native Helper — minimal Windows helper process.
 /// Responsibilities:
 ///   1. Global low-level keyboard hook (WH_KEYBOARD_LL) with keydown/keyup
-///   2. SendInput text injection
-///   3. GetForegroundWindow app detection
+///   2. Text injection via SetForegroundWindow + clipboard Ctrl+V
+///   3. GetForegroundWindow app detection (with HWND capture)
 ///   4. Named pipe IPC with Electron main process
 /// </summary>
 class Program
@@ -19,6 +19,10 @@ class Program
     private static NamedPipeServerStream? _pipeServer;
     private static StreamWriter? _pipeWriter;
     private static readonly object _writeLock = new();
+
+    // Store the target window HWND captured at get_foreground time.
+    // This is the window that had focus when the user released Right Ctrl.
+    private static IntPtr _targetHwnd = IntPtr.Zero;
 
     static async Task Main(string[] args)
     {
@@ -89,8 +93,6 @@ class Program
         {
             try
             {
-                // Fix "All pipe instances are busy" by using MaxAllowedServerInstances (255)
-                // instead of 1, allowing proper connection recycling on Windows.
                 _pipeServer = new NamedPipeServerStream(
                     "cadence-helper",
                     PipeDirection.InOut,
@@ -169,28 +171,31 @@ class Program
                     SendMessage(new { type = "pong" });
                     break;
 
-                case "inject":
-                    var text = root.GetProperty("text").GetString() ?? "";
-                    var useClipboard = root.TryGetProperty("useClipboard", out var cb) && cb.GetBoolean();
-                    if (useClipboard || text.Length > 100)
-                    {
-                        TextInjector.InjectViaClipboard(text);
-                    }
-                    else
-                    {
-                        TextInjector.InjectViaKeyboard(text);
-                    }
-                    SendMessage(new { type = "inject_done", length = text.Length });
-                    break;
-
                 case "get_foreground":
+                    // Capture the foreground app AND its HWND for later focus restoration
                     var fgInfo = ForegroundDetector.GetForegroundApp();
+
+                    // Store the HWND so we can restore focus before injection
+                    _targetHwnd = fgInfo.Hwnd;
+                    Console.Error.WriteLine($"[CadenceHelper] [FOREGROUND CAPTURED] Process={fgInfo.ProcessName}, HWND=0x{fgInfo.Hwnd:X}, Title=\"{fgInfo.WindowTitle}\"");
+
                     SendMessage(new
                     {
                         type = "foreground",
                         processName = fgInfo.ProcessName,
                         windowTitle = fgInfo.WindowTitle
                     });
+                    break;
+
+                case "inject":
+                    var text = root.GetProperty("text").GetString() ?? "";
+
+                    Console.Error.WriteLine($"[CadenceHelper] [INJECT] Injecting {text.Length} chars into HWND=0x{_targetHwnd:X}");
+
+                    // Use stored HWND to restore focus, then inject via clipboard
+                    TextInjector.InjectIntoWindow(text, _targetHwnd);
+
+                    SendMessage(new { type = "inject_done", length = text.Length });
                     break;
 
                 default:
