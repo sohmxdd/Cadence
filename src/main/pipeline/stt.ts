@@ -13,7 +13,6 @@ export class STTEngine {
   private modelPath: string;
 
   constructor(options?: STTOptions) {
-    // Resolve whisper binary path
     this.whisperBinaryPath = options?.whisperBinaryPath || this.getDefaultBinaryPath();
     this.modelPath = options?.modelPath || path.join(process.cwd(), 'models', 'ggml-base.en.bin');
   }
@@ -21,14 +20,17 @@ export class STTEngine {
   private getDefaultBinaryPath(): string {
     const isPackaged = app ? app.isPackaged : false;
     if (isPackaged) {
-      return path.join(process.resourcesPath, 'whisper', 'whisper-cli.exe');
+      const pkgCliPath = path.join(process.resourcesPath, 'models', 'whisper-cli.exe');
+      if (fs.existsSync(pkgCliPath)) return pkgCliPath;
+      return path.join(process.resourcesPath, 'models', 'main.exe');
     }
-    return path.join(process.cwd(), 'models', 'whisper-cli.exe');
+    const cliPath = path.join(process.cwd(), 'models', 'whisper-cli.exe');
+    if (fs.existsSync(cliPath)) return cliPath;
+    const mainPath = path.join(process.cwd(), 'models', 'main.exe');
+    if (fs.existsSync(mainPath)) return mainPath;
+    return cliPath;
   }
 
-  /**
-   * Save PCM 16-bit 16kHz mono Buffer chunks to a standard WAV file header
-   */
   public saveWavFile(pcmChunks: Buffer[], outputPath: string): void {
     const pcmData = Buffer.concat(pcmChunks);
     const numChannels = 1;
@@ -40,22 +42,19 @@ export class STTEngine {
     const chunkSize = 36 + dataSize;
 
     const wavHeader = Buffer.alloc(44);
-    // RIFF chunk descriptor
     wavHeader.write('RIFF', 0);
     wavHeader.writeUInt32LE(chunkSize, 4);
     wavHeader.write('WAVE', 8);
 
-    // fmt sub-chunk
     wavHeader.write('fmt ', 12);
-    wavHeader.writeUInt32LE(16, 16); // Subchunk1Size (16 for PCM)
-    wavHeader.writeUInt16LE(1, 20); // AudioFormat (1 for PCM)
+    wavHeader.writeUInt32LE(16, 16);
+    wavHeader.writeUInt16LE(1, 20);
     wavHeader.writeUInt16LE(numChannels, 22);
     wavHeader.writeUInt32LE(sampleRate, 24);
     wavHeader.writeUInt32LE(byteRate, 28);
     wavHeader.writeUInt16LE(blockAlign, 32);
     wavHeader.writeUInt16LE(bitsPerSample, 34);
 
-    // data sub-chunk
     wavHeader.write('data', 36);
     wavHeader.writeUInt32LE(dataSize, 40);
 
@@ -63,30 +62,27 @@ export class STTEngine {
     fs.writeFileSync(outputPath, fullWavBuffer);
   }
 
-  /**
-   * Run whisper.cpp CLI binary to transcribe WAV audio file
-   */
   public async transcribe(wavFilePath: string): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!fs.existsSync(this.whisperBinaryPath)) {
-        console.warn(`[STT] Whisper binary not found at ${this.whisperBinaryPath}. Returning mock/raw indicator.`);
-        return resolve('Whisper CLI executable missing. Please download whisper-cli.exe into models/');
+        console.warn(`[STT] Whisper binary not found at ${this.whisperBinaryPath}.`);
+        return resolve('Whisper CLI executable missing.');
       }
 
       if (!fs.existsSync(this.modelPath)) {
         console.warn(`[STT] Whisper model not found at ${this.modelPath}.`);
-        return resolve('Whisper model missing. Please download ggml-base.en.bin into models/');
+        return resolve('Whisper model missing.');
       }
 
       const args = [
         '-m', this.modelPath,
         '-f', wavFilePath,
-        '-nt', // No timestamps
+        '-nt',
         '--no-prints',
         '-language', 'en',
       ];
 
-      console.log(`[STT] Running whisper command: ${this.whisperBinaryPath} ${args.join(' ')}`);
+      console.log(`Spawning whisper.cpp with model path: ${this.modelPath}`);
       const child = spawn(this.whisperBinaryPath, args);
 
       let stdoutText = '';
@@ -110,6 +106,7 @@ export class STTEngine {
           console.warn(`[STT] Whisper process exited with code ${code}. Stderr: ${stderrText}`);
         }
         const cleaned = stdoutText.trim().replace(/\[\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}\.\d{3}\]/g, '').trim();
+        console.log(`whisper.cpp returned: "${cleaned}"`);
         resolve(cleaned);
       });
     });

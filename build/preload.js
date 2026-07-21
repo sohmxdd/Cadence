@@ -1,1 +1,0 @@
-"use strict";const n=require("electron");n.contextBridge.exposeInMainWorld("electronAPI",{onOverlayState:e=>{n.ipcRenderer.on("overlay-state",(o,r)=>e(r))},onAudioLevel:e=>{n.ipcRenderer.on("audio-level",(o,r)=>e(r))},sendAudioChunk:(e,o)=>{n.ipcRenderer.send("audio-chunk",e,o)}});

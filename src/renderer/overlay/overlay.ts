@@ -1,6 +1,8 @@
 type OverlayState = 'hidden' | 'listening' | 'processing' | 'done' | 'cancelled';
 type CadenceMode = 'dictation' | 'command';
 
+console.log('[Overlay Renderer] Script loaded and initialized');
+
 const pill = document.getElementById('pill') as HTMLDivElement;
 const canvas = document.getElementById('waveform-canvas') as HTMLCanvasElement;
 const statusText = document.getElementById('status-text') as HTMLSpanElement;
@@ -17,6 +19,7 @@ const barHeights: number[] = new Array(NUM_BARS).fill(3);
 
 if ((window as any).electronAPI) {
   (window as any).electronAPI.onOverlayState(({ state, mode, text }: { state: OverlayState; mode?: CadenceMode; text?: string }) => {
+    console.log(`[Overlay Renderer] Received overlay-state: state=${state}, mode=${mode}, text=${text}`);
     setState(state, mode, text);
   });
 
@@ -58,7 +61,8 @@ function renderLoop() {
   const gap = (canvas.width - NUM_BARS * dotW) / (NUM_BARS - 1);
   const centerY = canvas.height / 2;
 
-  ctx.fillStyle = '#FF3B30'; // Red waveform dots
+  // Dynamic waveform dot color: Neon Purple for Command Mode, Red for Dictation Mode
+  ctx.fillStyle = currentMode === 'command' ? '#A855F7' : '#FF3B30';
 
   for (let i = 0; i < NUM_BARS; i++) {
     let targetHeight = 3;

@@ -13,14 +13,11 @@ export class LLMEngine {
 
   constructor(config?: LLMConfig) {
     this.ollamaUrl = config?.ollamaUrl || 'http://localhost:11434';
-    this.dictationModel = config?.dictationModel || 'gemma3:1b';
-    this.commandModel = config?.commandModel || 'gemma3:1b';
-    this.timeoutMs = config?.timeoutMs || 5000;
+    this.dictationModel = config?.dictationModel || 'gemma2:2b';
+    this.commandModel = config?.commandModel || 'gemma2:2b';
+    this.timeoutMs = config?.timeoutMs || 8000;
   }
 
-  /**
-   * Clean up raw dictation transcript (grammar, casing, punctuation, remove stutters/fillers)
-   */
   public async cleanDictation(rawTranscript: string, promptOverride?: string): Promise<string> {
     if (!rawTranscript || !rawTranscript.trim()) return '';
 
@@ -43,9 +40,6 @@ Rules:
     }
   }
 
-  /**
-   * Apply spoken command instruction to existing text (Command Mode)
-   */
   public async processCommand(spokenInstruction: string, selectedText: string): Promise<string> {
     if (!spokenInstruction || !spokenInstruction.trim()) return selectedText;
 
@@ -68,6 +62,8 @@ Rules:
   private async queryOllama(model: string, systemPrompt: string, userPrompt: string): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    console.log(`Calling Ollama at localhost:11434 with prompt: "${userPrompt}"`);
 
     try {
       const response = await fetch(`${this.ollamaUrl}/api/generate`, {
@@ -92,7 +88,9 @@ Rules:
       }
 
       const data = await response.json();
-      return data.response || '';
+      const output = data.response || '';
+      console.log(`Ollama returned: "${output.trim()}"`);
+      return output;
     } catch (err) {
       clearTimeout(timer);
       throw err;

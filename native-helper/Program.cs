@@ -41,6 +41,12 @@ class Program
 
     private static void OnKeyEvent(object? sender, KeyEventArgs e)
     {
+        // Explicit raw logging for modifier / activation key events
+        if (e.KeyName.Contains("CTRL") || e.KeyName.Contains("SHIFT") || e.KeyName == "RIGHT CTRL")
+        {
+            Console.Error.WriteLine($"[HOOK RAW KEY] {e.KeyName} | State: {(e.IsDown ? "DOWN" : "UP")} | VkCode: 0x{e.VkCode:X2}");
+        }
+
         var msg = new
         {
             type = "key",
@@ -65,12 +71,13 @@ class Program
                 try
                 {
                     var json = JsonSerializer.Serialize(msg);
+                    Console.Error.WriteLine($"[CadenceHelper] [HELPER IPC TX] {json}");
                     _pipeWriter.WriteLine(json);
                     _pipeWriter.Flush();
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"[CadenceHelper] Pipe write error: {ex.Message}");
+                    Console.Error.WriteLine($"[CadenceHelper] [HELPER IPC ERROR] Pipe write error: {ex.Message}");
                 }
             }
         }
@@ -82,36 +89,41 @@ class Program
         {
             try
             {
+                // Fix "All pipe instances are busy" by using MaxAllowedServerInstances (255)
+                // instead of 1, allowing proper connection recycling on Windows.
                 _pipeServer = new NamedPipeServerStream(
                     "cadence-helper",
                     PipeDirection.InOut,
-                    1,
+                    NamedPipeServerStream.MaxAllowedServerInstances,
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous);
 
                 Console.Error.WriteLine("[CadenceHelper] Waiting for Electron connection on pipe 'cadence-helper'...");
                 await _pipeServer.WaitForConnectionAsync(ct);
-                Console.Error.WriteLine("[CadenceHelper] Electron connected.");
+                Console.Error.WriteLine("[CadenceHelper] [HELPER PIPE CONNECT] Electron connected to pipe.");
 
-                var reader = new StreamReader(_pipeServer, Encoding.UTF8);
-                lock (_writeLock)
+                using (var reader = new StreamReader(_pipeServer, Encoding.UTF8, leaveOpen: true))
                 {
-                    _pipeWriter = new StreamWriter(_pipeServer, Encoding.UTF8) { AutoFlush = true };
+                    lock (_writeLock)
+                    {
+                        _pipeWriter = new StreamWriter(_pipeServer, Encoding.UTF8) { AutoFlush = true };
+                    }
+
+                    // Send ready message
+                    SendMessage(new { type = "ready", version = "0.1.0" });
+
+                    // Read commands from Electron
+                    while (_pipeServer.IsConnected && !ct.IsCancellationRequested)
+                    {
+                        var line = await reader.ReadLineAsync(ct);
+                        if (line == null) break;
+
+                        Console.Error.WriteLine($"[CadenceHelper] [HELPER IPC RX] {line}");
+                        await HandleCommandAsync(line);
+                    }
                 }
 
-                // Send ready message
-                SendMessage(new { type = "ready", version = "0.1.0" });
-
-                // Read commands from Electron
-                while (_pipeServer.IsConnected && !ct.IsCancellationRequested)
-                {
-                    var line = await reader.ReadLineAsync(ct);
-                    if (line == null) break;
-
-                    await HandleCommandAsync(line);
-                }
-
-                Console.Error.WriteLine("[CadenceHelper] Electron disconnected.");
+                Console.Error.WriteLine("[CadenceHelper] [HELPER PIPE DISCONNECT] Electron disconnected from pipe.");
             }
             catch (OperationCanceledException)
             {
@@ -119,14 +131,26 @@ class Program
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[CadenceHelper] Pipe error: {ex.Message}");
-                await Task.Delay(1000, ct);
+                Console.Error.WriteLine($"[CadenceHelper] [HELPER PIPE ERROR] Pipe error: {ex.Message}");
+                await Task.Delay(500, ct);
             }
             finally
             {
-                lock (_writeLock) { _pipeWriter = null; }
-                _pipeServer?.Dispose();
-                _pipeServer = null;
+                lock (_writeLock)
+                {
+                    _pipeWriter?.Dispose();
+                    _pipeWriter = null;
+                }
+
+                if (_pipeServer != null)
+                {
+                    if (_pipeServer.IsConnected)
+                    {
+                        try { _pipeServer.Disconnect(); } catch { }
+                    }
+                    _pipeServer.Dispose();
+                    _pipeServer = null;
+                }
             }
         }
     }

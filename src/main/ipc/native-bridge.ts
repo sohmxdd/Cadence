@@ -4,7 +4,6 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { app } from 'electron';
 import { EventEmitter } from 'node:events';
-
 import os from 'node:os';
 
 const LOG_FILE = path.join(os.tmpdir(), 'cadence-app.log');
@@ -41,7 +40,7 @@ export class NativeBridge extends EventEmitter {
   private isConnecting = false;
   private buffer = '';
 
-  // Hotkey tracking state
+  // Hotkey tracking state (with key-repeat de-duplication)
   private isHoldingActivationKey = false;
   private holdStartTimestamp = 0;
   private currentMode: CadenceMode = 'dictation';
@@ -74,8 +73,23 @@ export class NativeBridge extends EventEmitter {
     if (isPackaged) {
       return path.join(process.resourcesPath, 'native-helper', 'CadenceHelper.exe');
     }
-    // Dev path relative to project root
-    return path.join(process.cwd(), 'native-helper', 'bin', 'publish', 'CadenceHelper.exe');
+
+    const candidates = [
+      path.join(app.getAppPath(), 'native-helper', 'bin', 'publish', 'CadenceHelper.exe'),
+      path.join(process.cwd(), 'native-helper', 'bin', 'publish', 'CadenceHelper.exe'),
+      path.join(__dirname, '../../native-helper/bin/publish/CadenceHelper.exe'),
+      'c:\\Users\\SOHAM\\Cadence\\native-helper\\bin\\publish\\CadenceHelper.exe',
+    ];
+
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        logBridge(`Found native helper executable at: ${p}`);
+        return p;
+      }
+    }
+
+    logBridge(`WARNING: Helper executable not found in candidates, defaulting to: ${candidates[0]}`);
+    return candidates[0];
   }
 
   private spawnHelper(): void {
@@ -89,16 +103,17 @@ export class NativeBridge extends EventEmitter {
       });
 
       this.helperProcess.on('exit', (code, signal) => {
-        logBridge(`Helper process exited with code ${code}, signal ${signal}. Restarting in 2s...`);
+        logBridge(`[HELPER PROCESS EXIT] Helper process exited with code ${code}, signal ${signal}. Restarting in 2s...`);
         this.helperProcess = null;
         this.socket = null;
+        this.isConnecting = false;
         setTimeout(() => this.spawnHelper(), 2000);
       });
 
       // Connect to named pipe after small delay for pipe server startup
       setTimeout(() => this.connectPipe(), 300);
     } catch (err) {
-      logBridge(`Failed to spawn native helper: ${err}`);
+      logBridge(`[HELPER SPAWN ERROR] Failed to spawn native helper: ${err}`);
     }
   }
 
@@ -107,10 +122,10 @@ export class NativeBridge extends EventEmitter {
     this.isConnecting = true;
 
     const pipeName = '\\\\.\\pipe\\cadence-helper';
-    logBridge(`Connecting to named pipe ${pipeName}...`);
+    logBridge(`[ELECTRON PIPE CONNECTING] Attempting connection to named pipe ${pipeName}...`);
 
     const client = net.connect(pipeName, () => {
-      logBridge('Connected to named pipe server!');
+      logBridge('[ELECTRON PIPE CONNECTED] Successfully connected to named pipe server!');
       this.isConnecting = false;
       this.socket = client;
       this.buffer = '';
@@ -120,51 +135,56 @@ export class NativeBridge extends EventEmitter {
     });
 
     client.on('data', (data) => {
-      this.buffer += data.toString('utf8');
+      const rawStr = data.toString('utf8');
+      this.buffer += rawStr;
       const lines = this.buffer.split('\n');
       this.buffer = lines.pop() || ''; // Keep incomplete line chunk
 
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
+        logBridge(`[ELECTRON IPC RX] ${trimmed}`);
         try {
           const parsed = JSON.parse(trimmed);
           this.handleIncomingMessage(parsed);
         } catch (e) {
-          console.error('[NativeBridge] Failed to parse JSON message:', trimmed);
+          logBridge(`[ELECTRON IPC PARSE ERROR] ${trimmed}`);
         }
       }
     });
 
     client.on('error', (err) => {
-      console.warn(`[NativeBridge] Pipe socket error: ${err.message}`);
+      logBridge(`[ELECTRON PIPE ERROR] Socket error: ${err.message}`);
+      this.socket = null;
       this.isConnecting = false;
     });
 
     client.on('close', () => {
-      console.log('[NativeBridge] Pipe connection closed');
+      logBridge('[ELECTRON PIPE DISCONNECTED] Pipe connection closed');
       this.socket = null;
       this.isConnecting = false;
     });
   }
 
   private send(msg: any): void {
+    const json = JSON.stringify(msg);
     if (this.socket && !this.socket.destroyed) {
-      this.socket.write(JSON.stringify(msg) + '\n');
+      logBridge(`[ELECTRON IPC TX] ${json}`);
+      this.socket.write(json + '\n');
     } else {
-      console.warn('[NativeBridge] Cannot send message, socket not connected');
+      logBridge(`[ELECTRON IPC WARNING] Cannot send message, socket disconnected: ${json}`);
     }
   }
 
   private handleIncomingMessage(msg: any): void {
     if (msg.type === 'ready') {
-      console.log(`[NativeBridge] Native helper ready (v${msg.version})`);
+      logBridge(`[NativeBridge] Native helper ready (v${msg.version})`);
       this.emit('ready');
       return;
     }
 
     if (msg.type === 'pong') {
-      console.log('[NativeBridge] Received pong from native helper');
+      logBridge('[NativeBridge] Received pong from native helper');
       return;
     }
 
@@ -192,45 +212,46 @@ export class NativeBridge extends EventEmitter {
     }
 
     if (msg.type === 'error') {
-      console.error('[NativeBridge] Helper reported error:', msg.message);
+      logBridge(`[NativeBridge] Helper reported error: ${msg.message}`);
     }
   }
 
   private handleKeyEvent(evt: KeyPayload): void {
-    // Lock in: RIGHT CTRL as activation key
-    // Command mode: RIGHT CTRL + SHIFT (either Shift key)
     const isActivationKey = evt.key === 'RIGHT CTRL';
 
     if (isActivationKey) {
       if (evt.state === 'down') {
-        if (!this.isHoldingActivationKey) {
-          this.isHoldingActivationKey = true;
-          this.holdStartTimestamp = Date.now();
-          this.currentMode = (evt.shift) ? 'command' : 'dictation';
-
-          console.log(`[NativeBridge] Activation key DOWN (mode: ${this.currentMode})`);
-          this.emit('hotkey-down', { mode: this.currentMode });
+        // De-duplication: Ignore OS key-repeat spam (~30ms) while holding
+        if (this.isHoldingActivationKey) {
+          logBridge(`[KEY REPEAT DE-DUPLICATED] Ignored auto-repeat down event for ${evt.key}`);
+          return;
         }
+
+        this.isHoldingActivationKey = true;
+        this.holdStartTimestamp = Date.now();
+        this.currentMode = (evt.shift) ? 'command' : 'dictation';
+
+        logBridge(`[HOTKEY DOWN] RIGHT CTRL pressed (mode: ${this.currentMode})`);
+        this.emit('hotkey-down', { mode: this.currentMode });
       } else if (evt.state === 'up') {
         if (this.isHoldingActivationKey) {
           const holdDuration = Date.now() - this.holdStartTimestamp;
           this.isHoldingActivationKey = false;
 
-          console.log(`[NativeBridge] Activation key UP (held ${holdDuration}ms)`);
+          logBridge(`[HOTKEY UP] RIGHT CTRL released (held ${holdDuration}ms)`);
           if (holdDuration >= this.debounceMs) {
             this.emit('hotkey-up', { mode: this.currentMode, duration: holdDuration });
           } else {
-            console.log(`[NativeBridge] Hold duration (${holdDuration}ms) below debounce threshold (${this.debounceMs}ms), ignoring tap.`);
+            logBridge(`[HOTKEY CANCEL] Duration (${holdDuration}ms) below debounce threshold (${this.debounceMs}ms)`);
             this.emit('hotkey-cancel');
           }
         }
       }
     } else if (this.isHoldingActivationKey && evt.state === 'down') {
-      // If user presses Shift while holding Right Ctrl, upgrade to command mode!
       if (evt.key === 'LEFT SHIFT' || evt.key === 'RIGHT SHIFT') {
         if (this.currentMode !== 'command') {
           this.currentMode = 'command';
-          console.log('[NativeBridge] Switched to COMMAND mode via Shift key');
+          logBridge('[MODE SWITCH] Switched to COMMAND mode via Shift key');
           this.emit('mode-change', { mode: 'command' });
         }
       }
