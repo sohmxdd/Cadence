@@ -38,10 +38,11 @@ Core Guidelines:
 
     try {
       const result = await this.queryOllama(this.dictationModel, systemPrompt, userPrompt, 0.1);
-      return result.trim() || rawTranscript;
+      const cleaned = this.stripEnclosingQuotes(result);
+      return cleaned || this.stripEnclosingQuotes(rawTranscript);
     } catch (err) {
       console.warn('[LLM] Ollama dictation cleanup failed or timed out. Falling back to raw transcript:', err);
-      return rawTranscript;
+      return this.stripEnclosingQuotes(rawTranscript);
     }
   }
 
@@ -66,11 +67,39 @@ Core Guidelines:
 
     try {
       const result = await this.queryOllama(this.commandModel, systemPrompt, userPrompt, 0.4);
-      return result.trim() || selectedText;
+      const cleaned = this.stripEnclosingQuotes(result);
+      return cleaned || selectedText;
     } catch (err) {
       console.warn('[LLM] Ollama command execution failed:', err);
       return selectedText;
     }
+  }
+
+  /**
+   * Strips surrounding quotes (double, single, smart curly quotes) and conversational preambles.
+   */
+  private stripEnclosingQuotes(text: string): string {
+    if (!text) return '';
+    let cleaned = text.trim();
+
+    // Strip common conversational preambles
+    cleaned = cleaned.replace(/^(Here is the (cleaned|refined|final|transformed) (text|output|dictation|transcript|instruction):?\s*)/i, '').trim();
+
+    const quotePairs = [
+      ['"', '"'],
+      ["'", "'"],
+      ['“', '”'],
+      ['‘', '’'],
+      ['`', '`']
+    ];
+
+    for (const [start, end] of quotePairs) {
+      if (cleaned.startsWith(start) && cleaned.endsWith(end) && cleaned.length >= 2) {
+        cleaned = cleaned.substring(start.length, cleaned.length - end.length).trim();
+      }
+    }
+
+    return cleaned;
   }
 
   private async queryOllama(
