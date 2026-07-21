@@ -1,0 +1,19 @@
+{
+  "activationKey": "RIGHT CTRL",
+  "debounceMs": 150,
+  "ollama": {
+    "url": "http://localhost:11434",
+    "dictationModel": "gemma3:1b",
+    "commandModel": "gemma3:1b",
+    "timeoutMs": 5000
+  },
+  "whisper": {
+    "binaryPath": "",
+    "modelPath": "models/ggml-base.en.bin"
+  },
+  "injection": {
+    "longTextThreshold": 100,
+    "interKeystrokeDelayMs": 5
+  },
+  "launchOnStartup": false
+}

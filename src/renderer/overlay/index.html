@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cadence Overlay</title>
+    <link rel="stylesheet" href="./overlay.css" />
+  </head>
+  <body>
+    <div id="pill" class="pill state-hidden">
+      <!-- Secondary Mode Badge (Shown in Command mode) -->
+      <div id="mode-badge" class="mode-badge">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+        <span>CMD</span>
+      </div>
+
+      <!-- Live Waveform Canvas -->
+      <canvas id="waveform-canvas" width="160" height="24"></canvas>
+    </div>
+
+    <script type="module" src="./overlay.ts"></script>
+  </body>
+</html>
