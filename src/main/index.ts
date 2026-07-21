@@ -182,11 +182,11 @@ const createSystemTray = () => {
     const contextMenu = Menu.buildFromTemplate([
       { label: 'Cadence Local Voice Control', enabled: false },
       { type: 'separator' },
-      { label: '🔴 Dictation Mode: Hold Right Ctrl', enabled: false },
-      { label: '🟣 Command Mode: Hold Right Ctrl + Shift', enabled: false },
+      { label: 'Dictation Mode: Hold Right Ctrl', enabled: false },
+      { label: 'Command Mode: Hold Right Ctrl + Shift', enabled: false },
       { type: 'separator' },
       {
-        label: isPaused ? '▶️ Resume Hotkeys' : '⏸️ Pause Hotkeys',
+        label: isPaused ? 'Resume Hotkeys' : 'Pause Hotkeys',
         click: () => {
           isPaused = !isPaused;
           tray?.setToolTip(`Cadence — Local Voice Control (${isPaused ? 'Paused' : 'Active'})`);
@@ -196,7 +196,7 @@ const createSystemTray = () => {
       },
       { type: 'separator' },
       {
-        label: '📋 View Application Log',
+        label: 'View Application Log',
         click: () => {
           if (fs.existsSync(LOG_FILE)) {
             shell.openPath(LOG_FILE);
@@ -205,7 +205,7 @@ const createSystemTray = () => {
       },
       { type: 'separator' },
       {
-        label: '❌ Quit Cadence',
+        label: 'Quit Cadence',
         click: () => {
           logApp('Quit requested from System Tray menu.');
           nativeBridge?.stop();

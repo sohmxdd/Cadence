@@ -1,136 +1,138 @@
-# Cadence 
+# Cadence
 
-> **Ultra-Fast, 100% Local Voice Dictation & AI Command Engine for Windows**
+> **Ultra-Fast, 100% Local Voice Dictation & Generative AI Command Engine for Windows**
 
-Cadence brings effortless voice-to-text dictation and AI-powered text transformations to **every single text field on Windows**. Hold down a hotkey anywhere, speak naturally, and watch your voice transform into pristine, publication-grade text directly at your cursor.
+Cadence delivers system-wide voice intelligence to **every text field in Windows**. Hold down a hotkey anywhere—whether inside VS Code, Word, Discord, Chrome, or terminal—speak naturally, and watch your voice transform into pristine, publication-grade text or rich generative AI content inserted directly at your cursor.
 
-No cloud APIs. No monthly subscriptions. No audio leaving your computer. **Pure local speed & privacy.**
-
----
-
-## 🌟 Key Features
-
-- 🎙️ **Push-to-Talk Dictation (`Right Ctrl`)**
-  Hold **`Right Ctrl`** to speak into any app (Notepad, VS Code, Discord, Word, Chrome, Slack). Release the key, and Cadence instantly cleans stutters, filler words ("um", "uh"), fixes grammar, and pastes the text directly at your cursor.
-
-- ⚡ **AI Command Mode (`Right Ctrl` + `Shift`)**
-  Hold **`Right Ctrl` + `Shift`** to enter **Command Mode** (glowing neon purple UI). Speak a prompt or instruction (e.g. *"Write an effective system audit prompt"* or *"Rewrite this paragraph to sound more professional"*), and Cadence generates rich, structured content or transforms existing text.
-
-- 🔒 **100% Private & Fully Local**
-  Powered by `whisper.cpp` (speech-to-text) and `Ollama` (local LLM). Zero network requests, zero cloud tracking.
-
-- 🖥️ **Universal Windows Compatibility**
-  Works in every text field system-wide using high-precision Win32 API text injection (`AttachThreadInput` + thread focus restoration).
-
-- 🎨 **Minimal Floating Overlay**
-  A sleek, distraction-free floating pill UI positioned top-center on your screen with a live dynamic audio waveform:
-  - 🔴 **Red Waveform**: Dictation Mode (Listening)
-  - 🟣 **Neon Purple Waveform**: Command Mode (Listening)
-  - 🔵 **Neon Blue Waveform**: Processing (Whisper STT + Ollama AI Inference)
-
-- ⚙️ **Per-App Profile Rules**
-  Customize dictation styles for specific applications (e.g., verbatim code preserving camelCase in VS Code vs. formal prose in Outlook).
+Zero cloud APIs. Zero monthly subscriptions. Zero network requests. **Pure local inference, speed, and privacy.**
 
 ---
 
-## 🎮 How to Use
+## Technical Highlights & Features
 
-| Mode | Shortcut | Visual Cue | What It Does |
+- **Push-to-Talk Dictation (`Right Ctrl`)**
+  Hold `Right Ctrl` to dictate into any window. Release to instantly filter stutters, remove hesitation artifacts (*"um"*, *"uh"*, *"you know"*), correct grammar in real-time, and inject clean text directly at your caret.
+
+- **Generative AI Command Engine (`Right Ctrl` + `Shift`)**
+  Hold `Right Ctrl` + `Shift` to trigger Command Mode (glowing neon purple interface). Issue complex spoken prompts (*"Write an effective system audit prompt"*, *"Refactor this block into TypeScript interfaces"*), and Cadence generates rich, structured content or rewrites highlighted text.
+
+- **System Tray Background Persistence**
+  Cadence runs silently in the system tray, taking zero foreground focus until summoned. Access hotkey controls, application logs, or quit the process directly from a clean context menu.
+
+- **Universal Win32 Text Injection**
+  Utilizes a custom C# native Win32 helper (`CadenceHelper.exe`) with `WH_KEYBOARD_LL` low-level hooks, hardware scan code virtualization (`MapVirtualKey`), and thread-focus coupling (`AttachThreadInput`) to guarantee accurate text delivery across all Windows applications.
+
+- **Minimalist Dynamic Floating Overlay**
+  Features a top-center floating glassmorphic pill UI powered by a 60 FPS Canvas audio visualizer:
+  - **Red Waveform**: Dictation Mode (Active Listening)
+  - **Neon Purple Waveform**: Command Mode (Active Listening)
+  - **Neon Blue Waveform**: Processing (Whisper STT + Ollama LLM Inference)
+
+- **100% Local Privacy Architecture**
+  Driven by `whisper.cpp` for instant speech-to-text and `Ollama` for local LLM inference. Audio buffers and text never leave your machine.
+
+---
+
+## Operating Modes
+
+| Mode | Global Shortcut | Visual Cue | Functionality |
 |---|---|---|---|
-| **Dictation Mode** | Hold **`Right Ctrl`** | Red glowing pill + live waveform | Speech-to-text with automatic filler word removal, grammar correction, and smart formatting into text field. |
-| **Command Mode** | Hold **`Right Ctrl` + `Shift`** | Neon Purple glowing pill | Spoken prompt execution & generative content creation (e.g. drafts, outlines, code, rewrites). |
+| **Dictation Mode** | Hold **`Right Ctrl`** | Red Glowing Pill | Real-time speech-to-text with automated grammar cleanup, filler stripping, and smart paragraphing. |
+| **Command Mode** | Hold **`Right Ctrl` + `Shift`** | Neon Purple Glowing Pill | Spoken instruction execution, generative drafting, text transformations, and code generation. |
 
-### Simple 3-Step Flow:
-1. **Click** into any text field or text box in any Windows app.
-2. **Press & Hold** `Right Ctrl` (or `Right Ctrl` + `Shift` for Command Mode) and speak naturally.
-3. **Release** the key — the floating pill switches to blue while processing, then injects your finalized text directly into the focused field!
-
----
-
-## 🛠️ System Requirements & Setup
-
-### 1. Prerequisites
-- **Windows 10 / 11 (x64)**
-- **.NET 9.0 SDK or Runtime** (for building/running the native C# helper)
-- **Node.js (v18+) & npm**
-- **Ollama**: Installed and running locally.
-
-### 2. Install Local Models
-
-#### **Ollama Model (LLM)**
-Open your terminal and pull your preferred local model (default: `gemma2:2b`):
-```bash
-ollama pull gemma2:2b
-```
-
-#### **Whisper STT Model**
-Download the `ggml-base.en.bin` model file (or any GGML Whisper model) and place it inside the `models/` directory:
-```text
-Cadence/
-└── models/
-    ├── whisper-cli.exe
-    └── ggml-base.en.bin
-```
+### How It Works:
+1. **Focus**: Click into any input field in any Windows app.
+2. **Hold & Speak**: Press and hold `Right Ctrl` (or `Right Ctrl` + `Shift` for Command Mode) and speak.
+3. **Release**: Release the hotkey. Cadence processes your speech locally in milliseconds and injects the output directly into your target field.
 
 ---
 
-## 🚀 Quick Start (Development)
+## Architecture & System Pipeline
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/sohmxdd/Cadence.git
-cd Cadence
-
-# 2. Install dependencies
-npm install
-
-# 3. Build the Native C# Helper
-dotnet publish native-helper/CadenceHelper.csproj -c Release -r win-x64 --self-contained false -o native-helper/bin/publish
-
-# 4. Start Cadence
-npm start
-```
-
----
-
-## 🏗️ Architecture & Technical Design
-
-Cadence is built with a high-performance multi-process pipeline:
+Cadence employs a multi-process, low-latency execution pipeline:
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│               Low-Level Windows System                 │
+│               Low-Level Windows Subsystem              │
 └──────────────────────────┬─────────────────────────────┘
                            │ WH_KEYBOARD_LL Global Hook
                            ▼
 ┌────────────────────────────────────────────────────────┐
 │    CadenceHelper.exe (C# Native Win32 Helper)          │
-│    - Global keyboard hook (filters synthetic keys)    │
-│    - Focus restoration & Win32 AttachThreadInput      │
+│    - Global low-level keyboard hook (filters synthetic) │
+│    - Caret window capture & AttachThreadInput sync      │
 │    - Named Pipe Server (`\\.\pipe\cadence-helper`)     │
 └──────────────────────────┬─────────────────────────────┘
                            │ Bidirectional IPC
                            ▼
 ┌────────────────────────────────────────────────────────┐
 │           Electron Main Process (Node.js/TS)           │
-│    - Audio Buffer Orchestration                        │
-│    - Resampling to 16kHz Mono PCM                      │
-│    - Execution lock & App Profile Config               │
+│    - 16kHz PCM Audio Buffer Processing                 │
+│    - Tray Lifecycle Management & Execution Locks       │
+│    - Output Sanitizer (Quote & Preamble Stripping)     │
 └──────────────┬──────────────────────────┬──────────────┘
                │                          │
                ▼                          ▼
 ┌───────────────────────────┐  ┌───────────────────────────┐
 │ whisper.cpp (Local STT)   │  │ Ollama API (Local LLM)    │
-│ High-speed speech-to-text │  │ Clean dictation & prompt  │
-│ transcription             │  │ execution                 │
-└────────────────────────n──┘  └───────────────────────────┘
+│ High-speed C++ speech     │  │ Local LLM inference via   │
+│ transcription engine      │  │ localhost:11434           │
+└───────────────────────────┘  └───────────────────────────┘
 ```
 
 ---
 
-## ⚙️ Per-App Formatting Profiles
+## Prerequisites & Installation
 
-You can customize how dictation behaves for specific applications by modifying `config/profiles.json`:
+### 1. Requirements
+- **Windows 10 / 11 (x64)**
+- **Ollama**: Installed and running locally (`ollama pull gemma2:2b`).
+- **.NET 9.0 SDK / Runtime**: (For building native Win32 binaries).
+- **Node.js (v18+) & npm**
+
+### 2. Models Setup
+- **Ollama LLM**: Pull your preferred local LLM model (default is `gemma2:2b`):
+  ```bash
+  ollama pull gemma2:2b
+  ```
+- **Whisper STT**: Download a GGML model (e.g., `ggml-base.en.bin`) and place it in the `models/` directory alongside `whisper-cli.exe`.
+
+---
+
+## Quick Start & Building
+
+### Development Mode
+```bash
+# Clone repository
+git clone https://github.com/sohmxdd/Cadence.git
+cd Cadence
+
+# Install dependencies
+npm install
+
+# Build native C# Win32 helper
+dotnet publish native-helper/CadenceHelper.csproj -c Release -r win-x64 --self-contained false -o native-helper/bin/publish
+
+# Run Cadence
+npm start
+```
+
+### Packaging Executable (`.exe`)
+To package Cadence into a standalone Windows executable (`Cadence.exe`):
+
+```bash
+npm run package
+```
+
+The output will be built into `out/Cadence-win32-x64/Cadence.exe`. 
+
+> **Note**: To create a Desktop or Start Menu shortcut, right-click `Cadence.exe` inside `out/Cadence-win32-x64/` and select **Create Shortcut**.
+
+---
+
+## Custom Per-App Profiles
+
+Customize dictation behaviour per application by editing `config/profiles.json`:
 
 ```json
 {
@@ -151,25 +153,25 @@ You can customize how dictation behaves for specific applications by modifying `
 
 ---
 
-## 📁 Repository Layout
+## Repository Structure
 
 ```text
 Cadence/
-├── native-helper/          # C# Native Windows Helper (WH_KEYBOARD_LL & Win32 injection)
+├── native-helper/          # C# Native Win32 Helper (WH_KEYBOARD_LL & SendInput)
 ├── src/
-│   ├── main/               # Electron Main Process & Pipeline Core
-│   │   ├── ipc/            # Named pipe IPC bridge (native-bridge.ts)
-│   │   └── pipeline/       # STT (whisper.cpp) & LLM (Ollama) engines
+│   ├── main/               # Main process, system tray, & pipeline orchestration
+│   │   ├── ipc/            # Named Pipe IPC Bridge (native-bridge.ts)
+│   │   └── pipeline/       # STT Engine (whisper.cpp) & LLM Engine (Ollama)
 │   └── renderer/
-│       ├── overlay/        # Top-center floating pill UI & waveform renderer
-│       └── audio/          # Hidden web audio capture & 16kHz resampling
-├── models/                 # Local whisper-cli.exe binary & GGML model binaries
-├── config/                 # User profiles config (profiles.json)
-└── tsconfig.json           # TypeScript configuration
+│       ├── overlay/        # Top-center floating pill UI & waveform canvas
+│       └── audio/          # Silent Web Audio capture & 16kHz resampler
+├── models/                 # Local whisper-cli.exe & GGML binaries
+├── config/                 # Profile rules (profiles.json)
+└── forge.config.ts         # Electron Forge packaging configuration
 ```
 
 ---
 
-## 📄 License
+## License
 
-Distributed under the **MIT License**. See `LICENSE` for more information.
+Licensed under the [MIT License](LICENSE).
