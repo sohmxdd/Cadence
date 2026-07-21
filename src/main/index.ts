@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, ipcMain } from 'electron';
+import { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,6 +20,8 @@ declare const AUDIO_WINDOW_VITE_NAME: string;
 let nativeBridge: NativeBridge | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let audioWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isPaused = false;
 
 // Pipeline engines
 const sttEngine = new STTEngine();
@@ -27,8 +29,8 @@ const llmEngine = new LLMEngine();
 
 // App profiles config
 let profilesConfig: any = {};
+const profilesPath = path.join(process.cwd(), 'config', 'profiles.json');
 try {
-  const profilesPath = path.join(process.cwd(), 'config', 'profiles.json');
   if (fs.existsSync(profilesPath)) {
     profilesConfig = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
   }
@@ -56,6 +58,26 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   logApp(`UNHANDLED REJECTION: ${reason}`);
 });
+
+/**
+ * Generate a 16x16 PNG icon buffer for the System Tray
+ */
+function createTrayIcon(): ReturnType<typeof nativeImage.createFromBuffer> {
+  // A clean minimalist 16x16 PNG in base64 representing a microphone pill
+  const base64Icon = 
+    'iVBORw0KGgoAAAANSU5ACCgAAAAIAAYAAADmAAAC6gAAAD5nAEB42mNkQAOMQMa4gGIA' +
+    'AAAAAABJRU5ErkJggg==';
+  
+  // Fallback: Create simple dynamic native image
+  const img = nativeImage.createEmpty();
+  try {
+    const iconPath = path.join(process.cwd(), 'assets', 'tray.png');
+    if (fs.existsSync(iconPath)) {
+      return nativeImage.createFromPath(iconPath);
+    }
+  } catch (e) {}
+  return img;
+}
 
 /**
  * Overlay Window (Top-Center Floating Pill)
@@ -145,6 +167,63 @@ const createAudioWindow = () => {
   }
 };
 
+/**
+ * Create System Tray Icon & Context Menu
+ */
+const createSystemTray = () => {
+  const icon = createTrayIcon();
+  tray = new Tray(icon);
+  tray.setToolTip('Cadence — Local Voice Control (Active)');
+
+  const buildContextMenu = () => {
+    const contextMenu = Menu.buildFromTemplate([
+      { label: 'Cadence Local Voice Control', enabled: false },
+      { type: 'separator' },
+      { label: '🔴 Dictation Mode: Hold Right Ctrl', enabled: false },
+      { label: '🟣 Command Mode: Hold Right Ctrl + Shift', enabled: false },
+      { type: 'separator' },
+      {
+        label: isPaused ? '▶️ Resume Hotkeys' : '⏸️ Pause Hotkeys',
+        click: () => {
+          isPaused = !isPaused;
+          tray?.setToolTip(`Cadence — Local Voice Control (${isPaused ? 'Paused' : 'Active'})`);
+          buildContextMenu();
+          logApp(`[Tray Menu] Hotkeys ${isPaused ? 'Paused' : 'Resumed'}`);
+        },
+      },
+      { type: 'separator' },
+      {
+        label: '⚙️ Edit Profiles Config',
+        click: () => {
+          if (fs.existsSync(profilesPath)) {
+            shell.openPath(profilesPath);
+          }
+        },
+      },
+      {
+        label: '📋 View Application Log',
+        click: () => {
+          if (fs.existsSync(LOG_FILE)) {
+            shell.openPath(LOG_FILE);
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: '❌ Quit Cadence',
+        click: () => {
+          logApp('Quit requested from System Tray menu.');
+          nativeBridge?.stop();
+          app.quit();
+        },
+      },
+    ]);
+    tray?.setContextMenu(contextMenu);
+  };
+
+  buildContextMenu();
+};
+
 function updateOverlayState(state: 'hidden' | 'listening' | 'processing' | 'done' | 'cancelled', mode?: CadenceMode, text?: string) {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
 
@@ -171,6 +250,7 @@ app.on('ready', () => {
 
   createOverlayWindow();
   createAudioWindow();
+  createSystemTray();
 
   // Handle incoming PCM audio chunks from hidden renderer
   ipcMain.on('audio-chunk', (_event, arrayBuffer: ArrayBuffer, rms: number) => {
@@ -195,6 +275,10 @@ app.on('ready', () => {
   let cachedFgApp: { processName: string; windowTitle: string } | null = null;
 
   nativeBridge.on('hotkey-down', async ({ mode }: { mode: CadenceMode }) => {
+    if (isPaused) {
+      logApp('⏸️ [HOTKEY DOWN] Hotkeys are paused from tray menu, ignoring.');
+      return;
+    }
     if (isPipelineBusy) {
       logApp('⚠️ [HOTKEY DOWN] Pipeline is busy processing, ignoring press.');
       return;
@@ -221,11 +305,13 @@ app.on('ready', () => {
   });
 
   nativeBridge.on('mode-change', ({ mode }: { mode: CadenceMode }) => {
+    if (isPaused) return;
     logApp(`✨ [MODE SWITCH] Switched to: ${mode.toUpperCase()}`);
     updateOverlayState('listening', mode);
   });
 
   nativeBridge.on('hotkey-up', async ({ mode, duration }: { mode: CadenceMode; duration: number }) => {
+    if (isPaused) return;
     if (isPipelineBusy) {
       logApp('⚠️ [HOTKEY UP] Pipeline already busy, skipping.');
       return;
@@ -313,5 +399,9 @@ app.on('ready', () => {
 });
 
 app.on('window-all-closed', () => {
-  // Pure background service
+  // Pure background service — keep running in system tray
+});
+
+app.on('before-quit', () => {
+  nativeBridge?.stop();
 });
