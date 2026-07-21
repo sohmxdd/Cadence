@@ -1,4 +1,4 @@
-# Cadence 🎙️✨
+# Cadence 
 
 > **Ultra-Fast, 100% Local Voice Dictation & AI Command Engine for Windows**
 
