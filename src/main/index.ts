@@ -55,7 +55,9 @@ function logApp(msg: string) {
 const createMainWindow = () => {
   mainWindow = new BrowserWindow({
     width: 800,
-    height: 600,
+    height: 650,
+    title: 'Cadence — Local Voice Control',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
@@ -68,6 +70,11 @@ const createMainWindow = () => {
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
     );
   }
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+    mainWindow?.focus();
+  });
 };
 
 const createOverlayWindow = () => {
