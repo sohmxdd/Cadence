@@ -71,7 +71,19 @@ export class NativeBridge extends EventEmitter {
   private getHelperExecutablePath(): string {
     const isPackaged = app.isPackaged;
     if (isPackaged) {
-      return path.join(process.resourcesPath, 'native-helper', 'CadenceHelper.exe');
+      const pkgCandidates = [
+        path.join(process.resourcesPath, 'publish', 'CadenceHelper.exe'),
+        path.join(process.resourcesPath, 'native-helper', 'CadenceHelper.exe'),
+        path.join(process.resourcesPath, 'native-helper', 'bin', 'publish', 'CadenceHelper.exe'),
+      ];
+      for (const p of pkgCandidates) {
+        if (fs.existsSync(p)) {
+          logBridge(`Found packaged native helper executable at: ${p}`);
+          return p;
+        }
+      }
+      logBridge(`WARNING: Packaged helper not found, fallback to: ${pkgCandidates[0]}`);
+      return pkgCandidates[0];
     }
 
     const candidates = [

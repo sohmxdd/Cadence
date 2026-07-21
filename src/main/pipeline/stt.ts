@@ -14,7 +14,16 @@ export class STTEngine {
 
   constructor(options?: STTOptions) {
     this.whisperBinaryPath = options?.whisperBinaryPath || this.getDefaultBinaryPath();
-    this.modelPath = options?.modelPath || path.join(process.cwd(), 'models', 'ggml-base.en.bin');
+    this.modelPath = options?.modelPath || this.getDefaultModelPath();
+  }
+
+  private getDefaultModelPath(): string {
+    const isPackaged = app ? app.isPackaged : false;
+    if (isPackaged) {
+      const pkgModelPath = path.join(process.resourcesPath, 'models', 'ggml-base.en.bin');
+      if (fs.existsSync(pkgModelPath)) return pkgModelPath;
+    }
+    return path.join(process.cwd(), 'models', 'ggml-base.en.bin');
   }
 
   private getDefaultBinaryPath(): string {

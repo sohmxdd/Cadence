@@ -10,6 +10,11 @@ const config: ForgeConfig = {
     asar: true,
     name: 'Cadence',
     executableName: 'cadence',
+    extraResource: [
+      'native-helper/bin/publish',
+      'models',
+      'config'
+    ],
   },
   rebuildConfig: {},
   makers: [
