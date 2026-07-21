@@ -190,8 +190,23 @@ app.on('ready', () => {
     logApp('✓ Native C# Helper Hook connected and listening on named pipe');
   });
 
-  nativeBridge.on('hotkey-down', ({ mode }: { mode: CadenceMode }) => {
+  // Pipeline lock to prevent concurrent overlapping executions
+  let isPipelineBusy = false;
+  let cachedFgApp: { processName: string; windowTitle: string } | null = null;
+
+  nativeBridge.on('hotkey-down', async ({ mode }: { mode: CadenceMode }) => {
+    if (isPipelineBusy) {
+      logApp('⚠️ [HOTKEY DOWN] Pipeline is busy processing, ignoring press.');
+      return;
+    }
+
     logApp(`🎤 [HOTKEY DOWN] Recording started (${mode.toUpperCase()} mode)`);
+
+    // Capture the target application & control HWND immediately at the instant of hotkey-down,
+    // BEFORE the overlay window is shown at all.
+    cachedFgApp = await nativeBridge?.getForegroundApp() || null;
+    logApp(`[Target Window Captured at Hotkey-Down] ${cachedFgApp?.processName} ("${cachedFgApp?.windowTitle}")`);
+
     isRecording = true;
     audioChunks.length = 0; // Clear previous audio buffer
 
@@ -211,15 +226,14 @@ app.on('ready', () => {
   });
 
   nativeBridge.on('hotkey-up', async ({ mode, duration }: { mode: CadenceMode; duration: number }) => {
+    if (isPipelineBusy) {
+      logApp('⚠️ [HOTKEY UP] Pipeline already busy, skipping.');
+      return;
+    }
+    isPipelineBusy = true;
+
     logApp(`⏹️ [HOTKEY UP] Released (${duration}ms hold). Processing speech...`);
     isRecording = false;
-
-    // *** CRITICAL: Capture foreground window HWND FIRST, before any overlay state
-    // changes or audio processing. This is the window that had focus when the user
-    // released the hotkey — it's our injection target. The C# helper stores the HWND
-    // internally and calls SetForegroundWindow() before injecting.
-    const fgApp = await nativeBridge?.getForegroundApp();
-    logApp(`[Target Window] ${fgApp?.processName} ("${fgApp?.windowTitle}")`);
 
     // Stop mic capture
     if (audioWindow && !audioWindow.isDestroyed()) {
@@ -236,6 +250,7 @@ app.on('ready', () => {
     if (audioChunks.length === 0) {
       logApp('[Cadence] Audio buffer empty, skipping transcription.');
       updateOverlayState('hidden');
+      isPipelineBusy = false;
       return;
     }
 
@@ -255,7 +270,7 @@ app.on('ready', () => {
       }
 
       // 2. Resolve per-app profile prompt override
-      const appProcess = (fgApp?.processName || '').toLowerCase();
+      const appProcess = (cachedFgApp?.processName || '').toLowerCase();
       const profile = profilesConfig.profiles?.[`${appProcess}.exe`] || profilesConfig.profiles?.[appProcess] || profilesConfig.default;
       const promptOverride = profile?.promptOverride;
 
@@ -281,6 +296,7 @@ app.on('ready', () => {
       try {
         if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath);
       } catch (e) {}
+      isPipelineBusy = false;
     }
 
     // Hide overlay window after brief delay

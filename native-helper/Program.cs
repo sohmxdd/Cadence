@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -20,9 +21,20 @@ class Program
     private static StreamWriter? _pipeWriter;
     private static readonly object _writeLock = new();
 
-    // Store the target window HWND captured at get_foreground time.
-    // This is the window that had focus when the user released Right Ctrl.
+    // Top-level window HWND captured at get_foreground time (e.g. VS Code BrowserWindow)
     private static IntPtr _targetHwnd = IntPtr.Zero;
+    // Exact focused child HWND captured at get_foreground time (e.g. Chrome_RenderWidgetHostHWND inside VS Code).
+    // This is the control that had the text cursor — ensures paste goes to the right editor pane.
+    private static IntPtr _targetFocusHwnd = IntPtr.Zero;
+
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetFocus();
 
     static async Task Main(string[] args)
     {
@@ -174,10 +186,31 @@ class Program
                 case "get_foreground":
                     // Capture the foreground app AND its HWND for later focus restoration
                     var fgInfo = ForegroundDetector.GetForegroundApp();
-
-                    // Store the HWND so we can restore focus before injection
                     _targetHwnd = fgInfo.Hwnd;
-                    Console.Error.WriteLine($"[CadenceHelper] [FOREGROUND CAPTURED] Process={fgInfo.ProcessName}, HWND=0x{fgInfo.Hwnd:X}, Title=\"{fgInfo.WindowTitle}\"");
+
+                    // ALSO capture the focused child control HWND within the foreground app.
+                    // This is e.g. Chrome_RenderWidgetHostHWND inside VS Code, or the Edit
+                    // control inside Notepad — the exact place where the user's cursor is.
+                    // Without this, SetForegroundWindow only focuses the top-level window,
+                    // and Ctrl+V may land in the wrong pane (terminal vs editor, etc.).
+                    _targetFocusHwnd = IntPtr.Zero;
+                    if (fgInfo.Hwnd != IntPtr.Zero)
+                    {
+                        uint fgTid = GetWindowThreadProcessId(fgInfo.Hwnd, out _);
+                        uint myTid = GetCurrentThreadId();
+                        bool attached = false;
+                        if (fgTid != 0 && fgTid != myTid)
+                        {
+                            attached = AttachThreadInput(myTid, fgTid, true);
+                        }
+                        if (attached)
+                        {
+                            _targetFocusHwnd = GetFocus();
+                            AttachThreadInput(myTid, fgTid, false);
+                        }
+                    }
+
+                    Console.Error.WriteLine($"[CadenceHelper] [FOREGROUND CAPTURED] Process={fgInfo.ProcessName}, TopHWND=0x{fgInfo.Hwnd:X}, FocusHWND=0x{_targetFocusHwnd:X}, Title=\"{fgInfo.WindowTitle}\"");
 
                     SendMessage(new
                     {
@@ -190,10 +223,11 @@ class Program
                 case "inject":
                     var text = root.GetProperty("text").GetString() ?? "";
 
-                    Console.Error.WriteLine($"[CadenceHelper] [INJECT] Injecting {text.Length} chars into HWND=0x{_targetHwnd:X}");
+                    Console.Error.WriteLine($"[CadenceHelper] [INJECT] Injecting {text.Length} chars | TopHWND=0x{_targetHwnd:X} | FocusHWND=0x{_targetFocusHwnd:X}");
 
-                    // Use stored HWND to restore focus, then inject via clipboard
-                    TextInjector.InjectIntoWindow(text, _targetHwnd);
+                    // Pass both the top-level window AND the exact focused child control.
+                    // TextInjector will restore focus to the exact control before Ctrl+V.
+                    TextInjector.InjectIntoWindow(text, _targetHwnd, _targetFocusHwnd);
 
                     SendMessage(new { type = "inject_done", length = text.Length });
                     break;

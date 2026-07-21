@@ -113,6 +113,17 @@ public class KeyboardHook
         if (nCode >= 0)
         {
             var hookStruct = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+
+            // LLKHF_INJECTED (0x10): event was injected by SendInput / keybd_event.
+            // IGNORE synthetic events — our own Ctrl+V injection must NOT be re-broadcast
+            // back through the IPC channel (it would land in the hook's own message pump,
+            // not in the target window, making paste go nowhere).
+            bool isInjected = (hookStruct.flags & 0x10) != 0;
+            if (isInjected)
+            {
+                return CallNextHookEx(_hookId, nCode, wParam, lParam);
+            }
+
             int msg = wParam.ToInt32();
             bool isDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
             bool isUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;

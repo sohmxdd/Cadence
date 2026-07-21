@@ -157,12 +157,14 @@ export class NativeBridge extends EventEmitter {
       logBridge(`[ELECTRON PIPE ERROR] Socket error: ${err.message}`);
       this.socket = null;
       this.isConnecting = false;
+      setTimeout(() => this.connectPipe(), 1500);
     });
 
     client.on('close', () => {
-      logBridge('[ELECTRON PIPE DISCONNECTED] Pipe connection closed');
+      logBridge('[ELECTRON PIPE DISCONNECTED] Pipe connection closed. Reconnecting in 1.5s...');
       this.socket = null;
       this.isConnecting = false;
+      setTimeout(() => this.connectPipe(), 1500);
     });
   }
 
