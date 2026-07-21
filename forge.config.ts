@@ -13,7 +13,8 @@ const config: ForgeConfig = {
     extraResource: [
       'native-helper/bin/publish',
       'models',
-      'config'
+      'config',
+      'assets'
     ],
   },
   rebuildConfig: {},

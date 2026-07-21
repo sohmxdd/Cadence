@@ -59,24 +59,27 @@ process.on('unhandledRejection', (reason) => {
   logApp(`UNHANDLED REJECTION: ${reason}`);
 });
 
-/**
- * Generate a 16x16 PNG icon buffer for the System Tray
- */
 function createTrayIcon(): ReturnType<typeof nativeImage.createFromBuffer> {
-  // A clean minimalist 16x16 PNG in base64 representing a microphone pill
-  const base64Icon = 
-    'iVBORw0KGgoAAAANSU5ACCgAAAAIAAYAAADmAAAC6gAAAD5nAEB42mNkQAOMQMa4gGIA' +
-    'AAAAAABJRU5ErkJggg==';
-  
-  // Fallback: Create simple dynamic native image
-  const img = nativeImage.createEmpty();
-  try {
-    const iconPath = path.join(process.cwd(), 'assets', 'tray.png');
+  const isPackaged = app ? app.isPackaged : false;
+  const candidates = isPackaged
+    ? [
+        path.join(process.resourcesPath, 'assets', 'tray.png'),
+        path.join(process.resourcesPath, 'tray.png'),
+      ]
+    : [
+        path.join(process.cwd(), 'assets', 'tray.png'),
+        path.join(app.getAppPath(), 'assets', 'tray.png'),
+      ];
+
+  for (const iconPath of candidates) {
     if (fs.existsSync(iconPath)) {
-      return nativeImage.createFromPath(iconPath);
+      logApp(`[Tray] Loaded custom tray icon from: ${iconPath}`);
+      return nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
     }
-  } catch (e) {}
-  return img;
+  }
+
+  logApp('[Tray] Custom tray icon not found, using empty nativeImage.');
+  return nativeImage.createEmpty();
 }
 
 /**
@@ -192,14 +195,6 @@ const createSystemTray = () => {
         },
       },
       { type: 'separator' },
-      {
-        label: '⚙️ Edit Profiles Config',
-        click: () => {
-          if (fs.existsSync(profilesPath)) {
-            shell.openPath(profilesPath);
-          }
-        },
-      },
       {
         label: '📋 View Application Log',
         click: () => {
