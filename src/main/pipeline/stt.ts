@@ -19,11 +19,23 @@ export class STTEngine {
 
   private getDefaultModelPath(): string {
     const isPackaged = app ? app.isPackaged : false;
-    if (isPackaged) {
-      const pkgModelPath = path.join(process.resourcesPath, 'models', 'ggml-base.en.bin');
-      if (fs.existsSync(pkgModelPath)) return pkgModelPath;
+    const baseDir = isPackaged ? process.resourcesPath : process.cwd();
+    
+    // Support multilingual models (e.g. ggml-base.bin, ggml-small.bin) with fallback to ggml-base.en.bin
+    const candidateModels = [
+      'ggml-base.bin',
+      'ggml-small.bin',
+      'ggml-medium.bin',
+      'ggml-large-v3.bin',
+      'ggml-base.en.bin'
+    ];
+
+    for (const modelName of candidateModels) {
+      const modelP = path.join(baseDir, 'models', modelName);
+      if (fs.existsSync(modelP)) return modelP;
     }
-    return path.join(process.cwd(), 'models', 'ggml-base.en.bin');
+
+    return path.join(baseDir, 'models', 'ggml-base.en.bin');
   }
 
   private getDefaultBinaryPath(): string {
@@ -71,7 +83,7 @@ export class STTEngine {
     fs.writeFileSync(outputPath, fullWavBuffer);
   }
 
-  public async transcribe(wavFilePath: string): Promise<string> {
+  public async transcribe(wavFilePath: string, language = 'auto'): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!fs.existsSync(this.whisperBinaryPath)) {
         console.warn(`[STT] Whisper binary not found at ${this.whisperBinaryPath}.`);
@@ -88,7 +100,8 @@ export class STTEngine {
         '-f', wavFilePath,
         '-nt',
         '--no-prints',
-        '-l', 'en',
+        '-l', language,
+        '-sns', // Suppress non-speech tokens to prevent repetitions
       ];
 
       console.log(`Spawning whisper.cpp with model path: ${this.modelPath}`);

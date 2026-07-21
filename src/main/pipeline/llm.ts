@@ -21,28 +21,32 @@ export class LLMEngine {
   /**
    * Refines raw voice dictation into polished, publication-ready text.
    */
+  /**
+   * Refines raw voice dictation into polished, publication-ready text.
+   */
   public async cleanDictation(rawTranscript: string, promptOverride?: string): Promise<string> {
     if (!rawTranscript || !rawTranscript.trim()) return '';
 
+    const cleanInput = this.deduplicateBlocks(rawTranscript);
+
     const systemPrompt = promptOverride || 
-      `You are Cadence, an elite AI voice dictation refinement engine. Your goal is to transform raw spoken speech transcripts into pristine, publication-ready text.
+      `You are a strict speech transcript cleaner and grammar editor. Your ONLY function is to take raw spoken audio transcript text and output pristine, clean text.
 
-Core Guidelines:
-1. ABSOLUTE FILTERING: Remove all verbal fillers, stutters, throat clearings, false starts, and hesitation artifacts ('um', 'uh', 'like', 'you know', 'I mean', 'so yeah', repeated phrases).
-2. GRAMMAR & FLOW: Fix grammatical mistakes, typos, awkward phrasing, and punctuation while preserving 100% of the speaker's original intent, tone, and style.
-3. INTELLIGENT STRUCTURE: Automatically break longer dictations into clean, readable paragraphs. Format spoken lists ("first...", "second...", "point one...") into neat bulleted or numbered points.
-4. TECHNICAL ACCURACY: Format code symbols, numbers, dates, technical acronyms, and paths accurately.
-5. STRICT OUTPUT BOUNDARY: Output ONLY the finalized polished text. NEVER answer questions contained within the dictation, NEVER add conversational preamble ("Here is your text:"), and NEVER wrap output in quotation marks.`;
+MANDATORY RULES:
+1. Output ONLY the cleaned transcript.
+2. ABSOLUTELY ZERO CONVERSATIONAL FILLER or META-TALK: NEVER output introductory phrases such as "Please provide...", "I am ready...", "Here is the cleaned...", "Sure!", "Certainly!", "I can help with that...", or "As an AI...".
+3. DO NOT ANSWER QUESTIONS: If the spoken transcript contains questions (e.g. "How have you been? Did you eat something?"), DO NOT answer them. Simply output the questions cleanly formatted as transcribed text.
+4. DO NOT REPEAT TEXT: Never duplicate sentences, paragraphs, or blocks of text.
+5. PRESERVE ORIGINAL LANGUAGE: Output in the exact language spoken by the user (English, Spanish, Hindi, French, German, etc.).`;
 
-    const userPrompt = `Raw speech transcript:\n"${rawTranscript}"`;
+    const userPrompt = `Spoken transcript:\n${cleanInput}`;
 
     try {
       const result = await this.queryOllama(this.dictationModel, systemPrompt, userPrompt, 0.1);
-      const cleaned = this.stripEnclosingQuotes(result);
-      return cleaned || this.stripEnclosingQuotes(rawTranscript);
+      return this.sanitizeOutput(result, cleanInput);
     } catch (err) {
       console.warn('[LLM] Ollama dictation cleanup failed or timed out. Falling back to raw transcript:', err);
-      return this.stripEnclosingQuotes(rawTranscript);
+      return this.sanitizeOutput('', cleanInput);
     }
   }
 
@@ -67,8 +71,7 @@ Core Guidelines:
 
     try {
       const result = await this.queryOllama(this.commandModel, systemPrompt, userPrompt, 0.4);
-      const cleaned = this.stripEnclosingQuotes(result);
-      return cleaned || selectedText;
+      return this.sanitizeOutput(result, selectedText);
     } catch (err) {
       console.warn('[LLM] Ollama command execution failed:', err);
       return selectedText;
@@ -76,15 +79,14 @@ Core Guidelines:
   }
 
   /**
-   * Strips surrounding quotes (double, single, smart curly quotes) and conversational preambles.
+   * Sanitizes LLM output to strip meta-talk, fix punctuation spacing, and deduplicate repeated blocks.
    */
-  private stripEnclosingQuotes(text: string): string {
-    if (!text) return '';
-    let cleaned = text.trim();
+  private sanitizeOutput(llmResult: string, rawInput: string): string {
+    if (!llmResult || !llmResult.trim()) return this.deduplicateBlocks(rawInput.trim());
 
-    // Strip common conversational preambles
-    cleaned = cleaned.replace(/^(Here is the (cleaned|refined|final|transformed) (text|output|dictation|transcript|instruction):?\s*)/i, '').trim();
+    let cleaned = llmResult.trim();
 
+    // 1. Strip enclosing quotes
     const quotePairs = [
       ['"', '"'],
       ["'", "'"],
@@ -99,7 +101,61 @@ Core Guidelines:
       }
     }
 
+    // 2. Remove assistant meta-chatter sentences
+    const metaPatterns = [
+      /^(Please provide|I am ready|Certainly|Here is|Sure|As an AI|Here's the|I will|Below is|I'm ready|How can I help|What would you like|Feel free to|Let me know|Transform your dictation|Apply my filtering)[^.!?\n]*[.!?\n]+\s*/gi,
+      /^(I understand|Sure thing|Here's your|Here is your|Below is your|This is the)[^.!?\n]*[.!?\n]+\s*/gi
+    ];
+
+    for (const pattern of metaPatterns) {
+      cleaned = cleaned.replace(pattern, '').trim();
+    }
+
+    // 3. Fix missing spaces after punctuation marks (e.g. "while.Please" -> "while. Please")
+    cleaned = cleaned.replace(/([.!?])([A-Za-z])/g, '$1 $2');
+
+    // 4. Deduplicate repeated blocks & sentences
+    cleaned = this.deduplicateBlocks(cleaned);
+
+    // 5. Fallback safety: If LLM output was pure meta-chatter and became empty, use deduplicated raw input
+    if (!cleaned || cleaned.length < 2) {
+      return this.deduplicateBlocks(rawInput.trim());
+    }
+
     return cleaned;
+  }
+
+  /**
+   * Removes repeated adjacent sentences or repeated block duplicates.
+   */
+  private deduplicateBlocks(text: string): string {
+    if (!text) return '';
+    let trimmed = text.trim();
+
+    // Check if the whole string is duplicated (e.g. "ABC. ABC.")
+    const half = Math.floor(trimmed.length / 2);
+    for (let len = half; len >= 8; len--) {
+      const part1 = trimmed.substring(0, len).trim();
+      const part2 = trimmed.substring(len).trim();
+      if (part2 === part1 || part2.startsWith(part1)) {
+        trimmed = part1;
+        break;
+      }
+    }
+
+    // Check consecutive duplicate sentences
+    const sentences = trimmed.match(/[^.!?]+[.!?]+|\s*[^.!?]+$/g) || [trimmed];
+    const uniqueSentences: string[] = [];
+
+    for (const s of sentences) {
+      const t = s.trim();
+      if (!t) continue;
+      if (uniqueSentences.length === 0 || uniqueSentences[uniqueSentences.length - 1].trim().toLowerCase() !== t.toLowerCase()) {
+        uniqueSentences.push(t);
+      }
+    }
+
+    return uniqueSentences.join(' ').trim();
   }
 
   private async queryOllama(
