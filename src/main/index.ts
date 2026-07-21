@@ -12,15 +12,12 @@ if (started) {
   app.quit();
 }
 
-declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
-declare const MAIN_WINDOW_VITE_NAME: string;
 declare const OVERLAY_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const OVERLAY_WINDOW_VITE_NAME: string;
 declare const AUDIO_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const AUDIO_WINDOW_VITE_NAME: string;
 
 let nativeBridge: NativeBridge | null = null;
-let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let audioWindow: BrowserWindow | null = null;
 
@@ -43,7 +40,7 @@ try {
 const audioChunks: Buffer[] = [];
 let isRecording = false;
 
-const LOG_FILE = path.join(process.cwd(), 'cadence-app.log');
+const LOG_FILE = path.join(os.tmpdir(), 'cadence-app.log');
 function logApp(msg: string) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
@@ -52,31 +49,18 @@ function logApp(msg: string) {
   } catch (e) {}
 }
 
-const createMainWindow = () => {
-  mainWindow = new BrowserWindow({
-    width: 800,
-    height: 650,
-    title: 'Cadence — Local Voice Control',
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-    },
-  });
+process.on('uncaughtException', (err) => {
+  logApp(`CRITICAL UNCAUGHT EXCEPTION: ${err.stack || err}`);
+});
 
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-    );
-  }
+process.on('unhandledRejection', (reason) => {
+  logApp(`UNHANDLED REJECTION: ${reason}`);
+});
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-    mainWindow?.focus();
-  });
-};
-
+/**
+ * Overlay Window (Top-Center Floating Pill)
+ * Strictly hidden (show: false) when idle. ONLY shown when hotkey is held.
+ */
 const createOverlayWindow = () => {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width } = primaryDisplay.bounds;
@@ -84,7 +68,7 @@ const createOverlayWindow = () => {
   const overlayWidth = 320;
   const overlayHeight = 60;
   const x = Math.round((width - overlayWidth) / 2);
-  const y = 12; // Top center, flush below top edge per user screenshot reference
+  const y = 14; // Flush top-center position
 
   overlayWindow = new BrowserWindow({
     width: overlayWidth,
@@ -97,13 +81,13 @@ const createOverlayWindow = () => {
     resizable: false,
     skipTaskbar: true,
     focusable: false,
-    show: true,
+    show: false, // CRITICAL: Hidden by default, only shown during active hotkey usage
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
 
-  // Critical: Never steal focus from whatever app the user is dictating into
+  // Never steal focus from whatever application the user is dictating into
   overlayWindow.setIgnoreMouseEvents(true);
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
 
@@ -116,9 +100,12 @@ const createOverlayWindow = () => {
   }
 };
 
+/**
+ * Hidden Audio Capture Window
+ */
 const createAudioWindow = () => {
   audioWindow = new BrowserWindow({
-    show: false, // Hidden background window
+    show: false, // Strictly hidden background renderer
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
@@ -133,16 +120,30 @@ const createAudioWindow = () => {
   }
 };
 
-function updateOverlayState(state: 'hidden' | 'listening' | 'processing' | 'done', mode?: CadenceMode) {
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow.webContents.send('overlay-state', { state, mode });
+function updateOverlayState(state: 'hidden' | 'listening' | 'processing' | 'done' | 'cancelled', mode?: CadenceMode, text?: string) {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+
+  if (state === 'hidden') {
+    // Notify renderer to animate fade out, then hide BrowserWindow
+    overlayWindow.webContents.send('overlay-state', { state, mode, text });
+    setTimeout(() => {
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.hide();
+      }
+    }, 220);
+  } else {
+    // Show window without taking focus before sending state
+    if (!overlayWindow.isVisible()) {
+      overlayWindow.showInactive();
+    }
+    overlayWindow.webContents.send('overlay-state', { state, mode, text });
   }
 }
 
 app.on('ready', () => {
-  logApp('=== CADENCE APP STARTING ===');
+  logApp('=== CADENCE BACKGROUND SERVICE STARTED ===');
 
-  createMainWindow();
+  // Create overlay and audio capture windows (both hidden by default)
   createOverlayWindow();
   createAudioWindow();
 
@@ -150,8 +151,7 @@ app.on('ready', () => {
   ipcMain.on('audio-chunk', (_event, arrayBuffer: ArrayBuffer, rms: number) => {
     if (isRecording) {
       audioChunks.push(Buffer.from(arrayBuffer));
-      // Stream live audio level to overlay for reactive waveform animation
-      if (overlayWindow && !overlayWindow.isDestroyed()) {
+      if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
         overlayWindow.webContents.send('audio-level', rms);
       }
     }
@@ -163,19 +163,17 @@ app.on('ready', () => {
 
   nativeBridge.on('ready', async () => {
     logApp('✓ Native Bridge connected and ready!');
-    const fg = await nativeBridge?.getForegroundApp();
-    logApp(`[Cadence] Focused app on launch: ${fg?.processName} ("${fg?.windowTitle}")`);
   });
 
   nativeBridge.on('hotkey-down', ({ mode }: { mode: CadenceMode }) => {
-    logApp(`🎤 [HOTKEY DOWN] Starting recording (mode: ${mode.toUpperCase()})`);
+    logApp(`🎤 [HOTKEY DOWN] Recording started (mode: ${mode.toUpperCase()})`);
     isRecording = true;
     audioChunks.length = 0; // Clear previous audio buffer
 
-    // Show overlay pill in listening state
+    // Make overlay pill visible in listening state
     updateOverlayState('listening', mode);
 
-    // Trigger mic capture in audio renderer
+    // Trigger mic capture in hidden audio renderer
     if (audioWindow && !audioWindow.isDestroyed()) {
       audioWindow.webContents.executeJavaScript('window.startAudioCapture && window.startAudioCapture()');
     }
@@ -195,8 +193,8 @@ app.on('ready', () => {
       audioWindow.webContents.executeJavaScript('window.stopAudioCapture && window.stopAudioCapture()');
     }
 
-    // Transition overlay to processing state (blue looping animation)
-    updateOverlayState('processing', mode);
+    // Transition overlay to processing state ("Cleaning up…")
+    updateOverlayState('processing', mode, 'Cleaning up…');
 
     // Get target foreground window info
     const fgApp = await nativeBridge?.getForegroundApp();
@@ -219,6 +217,12 @@ app.on('ready', () => {
       const rawTranscript = await sttEngine.transcribe(tempWavPath);
       logApp(`[Cadence] STT Raw output: "${rawTranscript}"`);
 
+      if (!rawTranscript || !rawTranscript.trim()) {
+        logApp('[Cadence] Speech transcript empty.');
+        updateOverlayState('hidden');
+        return;
+      }
+
       // 2. Resolve per-app profile prompt override
       const appProcess = (fgApp?.processName || '').toLowerCase();
       const profile = profilesConfig.profiles?.[`${appProcess}.exe`] || profilesConfig.profiles?.[appProcess] || profilesConfig.default;
@@ -236,21 +240,23 @@ app.on('ready', () => {
       // 4. Inject finalized text into focused application
       if (resultText && resultText.trim()) {
         await nativeBridge?.injectText(resultText);
+        updateOverlayState('done', mode, 'Done');
+      } else {
+        updateOverlayState('hidden');
       }
     } catch (err) {
       logApp(`[Cadence] Pipeline processing error: ${err}`);
+      updateOverlayState('hidden');
     } finally {
-      // Clean up temp audio file
       try {
         if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath);
       } catch (e) {}
     }
 
-    // Show done state briefly then hide
-    updateOverlayState('done', mode);
+    // Hide overlay window after brief delay
     setTimeout(() => {
       updateOverlayState('hidden');
-    }, 400);
+    }, 450);
   });
 
   nativeBridge.on('hotkey-cancel', () => {
@@ -261,14 +267,5 @@ app.on('ready', () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    nativeBridge?.stop();
-    app.quit();
-  }
-});
-
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createMainWindow();
-  }
+  // Prevent app from quitting when windows close — Cadence runs as background service!
 });

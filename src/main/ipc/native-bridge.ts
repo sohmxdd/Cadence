@@ -1,6 +1,14 @@
+import { spawn, ChildProcess } from 'node:child_process';
+import net from 'node:net';
+import path from 'node:path';
 import fs from 'node:fs';
+import { app } from 'electron';
+import { EventEmitter } from 'node:events';
 
-const LOG_FILE = path.join(process.cwd(), 'cadence-app.log');
+import os from 'node:os';
+
+const LOG_FILE = path.join(os.tmpdir(), 'cadence-app.log');
+
 function logBridge(msg: string) {
   const line = `[${new Date().toISOString()}] [NativeBridge] ${msg}`;
   console.log(line);

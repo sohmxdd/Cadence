@@ -77,4 +77,6 @@ native-helper/bin/
 native-helper/obj/
 native-helper/publish/
 recordings/
+WhimprFlow/
 *.wav
+*.log

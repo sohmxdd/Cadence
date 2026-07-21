@@ -1,25 +1,23 @@
-type OverlayState = 'hidden' | 'listening' | 'processing' | 'done';
+type OverlayState = 'hidden' | 'listening' | 'processing' | 'done' | 'cancelled';
 type CadenceMode = 'dictation' | 'command';
 
 const pill = document.getElementById('pill') as HTMLDivElement;
 const canvas = document.getElementById('waveform-canvas') as HTMLCanvasElement;
+const statusText = document.getElementById('status-text') as HTMLSpanElement;
 const ctx = canvas.getContext('2d')!;
 
 let currentState: OverlayState = 'hidden';
 let currentMode: CadenceMode = 'dictation';
-let audioLevel = 0; // 0 to 1
+let audioLevel = 0; // 0.0 to 1.0
 let animFrameId: number | null = null;
 let phase = 0;
 
-// Bar animation heights smoothing buffer
 const NUM_BARS = 16;
-const barHeights: number[] = new Array(NUM_BARS).fill(4);
+const barHeights: number[] = new Array(NUM_BARS).fill(3);
 
-// Receive IPC messages from main process via preload or IPC
-// (In Electron Vite, we can expose window.electronAPI or listen via ipcRenderer if exposed)
 if ((window as any).electronAPI) {
-  (window as any).electronAPI.onOverlayState(({ state, mode }: { state: OverlayState; mode?: CadenceMode }) => {
-    setState(state, mode);
+  (window as any).electronAPI.onOverlayState(({ state, mode, text }: { state: OverlayState; mode?: CadenceMode; text?: string }) => {
+    setState(state, mode, text);
   });
 
   (window as any).electronAPI.onAudioLevel((level: number) => {
@@ -27,13 +25,19 @@ if ((window as any).electronAPI) {
   });
 }
 
-function setState(state: OverlayState, mode?: CadenceMode) {
+function setState(state: OverlayState, mode?: CadenceMode, text?: string) {
   currentState = state;
   if (mode) currentMode = mode;
 
   pill.className = `pill state-${state}`;
   if (currentMode === 'command') {
     pill.classList.add('is-command-mode');
+  } else {
+    pill.classList.remove('is-command-mode');
+  }
+
+  if (text) {
+    statusText.textContent = text;
   }
 
   if (state === 'hidden') {
@@ -41,7 +45,7 @@ function setState(state: OverlayState, mode?: CadenceMode) {
       cancelAnimationFrame(animFrameId);
       animFrameId = null;
     }
-  } else if (!animFrameId) {
+  } else if (!animFrameId && state === 'listening') {
     animFrameId = requestAnimationFrame(renderLoop);
   }
 }
@@ -50,52 +54,38 @@ function renderLoop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   phase += 0.08;
 
-  const barWidth = 4;
-  const barGap = 6;
-  const startX = (canvas.width - (NUM_BARS * (barWidth + barGap) - barGap)) / 2;
+  const dotW = 3;
+  const gap = (canvas.width - NUM_BARS * dotW) / (NUM_BARS - 1);
   const centerY = canvas.height / 2;
 
-  // Determine bar colors and heights based on state
-  let primaryColor = '#FF3B30'; // Red for listening
-  if (currentState === 'processing') {
-    primaryColor = '#0A84FF'; // Blue for processing
-  } else if (currentState === 'done') {
-    primaryColor = '#30D158'; // Green for done
-  }
+  ctx.fillStyle = '#FF3B30'; // Red waveform dots
 
   for (let i = 0; i < NUM_BARS; i++) {
-    let targetHeight = 4;
+    let targetHeight = 3;
 
     if (currentState === 'listening') {
-      // Dynamic bars reacting to live audio input RMS
-      const wave = Math.sin(phase + i * 0.4) * 0.3 + 0.7;
-      const randomNoise = (Math.random() - 0.5) * 0.15;
-      targetHeight = Math.max(4, (audioLevel * 20 + 4) * wave + randomNoise * 10);
-    } else if (currentState === 'processing') {
-      // Smooth looping pulse wave for processing
-      const wave = (Math.sin(phase * 1.5 + i * 0.35) + 1) / 2;
-      targetHeight = 4 + wave * 14;
-    } else if (currentState === 'done') {
-      targetHeight = 6;
+      const shimmer = 0.12 + 0.06 * Math.abs(Math.sin(phase * 1.5 + i * 0.7));
+      const amp = Math.max(shimmer, audioLevel);
+      targetHeight = Math.max(3, 3 + amp * 18 * Math.sin(phase + i * 0.35));
     }
 
-    // Smooth moving average for bar height transitions
-    barHeights[i] += (targetHeight - barHeights[i]) * 0.3;
+    // Moving average smoothing
+    barHeights[i] += (targetHeight - barHeights[i]) * 0.35;
 
-    const h = barHeights[i];
-    const x = startX + i * (barWidth + barGap);
-    const y = centerY - h / 2;
+    const bh = Math.max(3, barHeights[i]);
+    const x = i * (dotW + gap);
+    const y = centerY - bh / 2;
 
-    ctx.fillStyle = primaryColor;
     ctx.beginPath();
-    ctx.roundRect(x, y, barWidth, h, 2);
+    ctx.roundRect(x, y, dotW, bh, dotW / 2);
     ctx.fill();
   }
 
-  if (currentState !== 'hidden') {
+  if (currentState === 'listening') {
     animFrameId = requestAnimationFrame(renderLoop);
+  } else {
+    animFrameId = null;
   }
 }
 
-// Initial state
 setState('hidden');
