@@ -42,11 +42,28 @@ public static class TextInjector
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
     /// <summary>
+    /// Explicitly release any logically held modifier keys (Ctrl, Shift, Alt)
+    /// in Windows input queue so SendInput characters or Ctrl+V simulate cleanly.
+    /// </summary>
+    public static void ReleaseModifiers()
+    {
+        var inputSize = Marshal.SizeOf<INPUT>();
+        ushort[] modifiers = new ushort[] { 0x11, 0xA2, 0xA3, 0x10, 0xA0, 0xA1, 0x12, 0xA4, 0xA5 };
+        var inputs = new INPUT[modifiers.Length];
+        for (int i = 0; i < modifiers.Length; i++)
+        {
+            inputs[i] = MakeKeyInput(modifiers[i], true);
+        }
+        SendInput((uint)inputs.Length, inputs, inputSize);
+        Thread.Sleep(20);
+    }
+
+    /// <summary>
     /// Inject text character-by-character using SendInput with KEYEVENTF_UNICODE.
-    /// Best for short text (&lt;= 100 chars). Adds a small delay between chars.
     /// </summary>
     public static void InjectViaKeyboard(string text)
     {
+        ReleaseModifiers();
         var inputSize = Marshal.SizeOf<INPUT>();
 
         foreach (char c in text)
@@ -88,48 +105,59 @@ public static class TextInjector
             };
 
             SendInput(2, inputs, inputSize);
-            Thread.Sleep(3); // Small delay to avoid dropped chars
+            Thread.Sleep(3);
         }
     }
 
     /// <summary>
-    /// Inject text via clipboard + Ctrl+V. Used for longer text blocks.
+    /// Inject text via clipboard + Ctrl+V.
     /// Must run on an STA thread for clipboard access.
     /// </summary>
     public static void InjectViaClipboard(string text)
     {
-        // Clipboard operations need STA thread
+        ReleaseModifiers();
+
         var thread = new Thread(() =>
         {
             try
             {
-                // Save current clipboard
-                System.Windows.Forms.Clipboard.SetText(text);
-                Thread.Sleep(50); // Let clipboard settle
+                for (int attempt = 0; attempt < 3; attempt++)
+                {
+                    try
+                    {
+                        System.Windows.Forms.Clipboard.SetText(text);
+                        break;
+                    }
+                    catch
+                    {
+                        Thread.Sleep(30);
+                    }
+                }
+
+                Thread.Sleep(40);
 
                 // Simulate Ctrl+V
                 var inputSize = Marshal.SizeOf<INPUT>();
                 var inputs = new INPUT[4];
 
-                // Ctrl down
                 inputs[0] = MakeKeyInput(VK_CONTROL, false);
-                // V down
                 inputs[1] = MakeKeyInput(VK_V, false);
-                // V up
                 inputs[2] = MakeKeyInput(VK_V, true);
-                // Ctrl up
                 inputs[3] = MakeKeyInput(VK_CONTROL, true);
 
-                SendInput(4, inputs, inputSize);
+                uint sent = SendInput(4, inputs, inputSize);
+                Console.Error.WriteLine($"[TextInjector] SendInput Ctrl+V result: {sent}");
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[TextInjector] Clipboard inject error: {ex.Message}");
+                // Fallback to keyboard injection
+                InjectViaKeyboard(text);
             }
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        thread.Join(2000); // Wait up to 2s
+        thread.Join(2000);
     }
 
     private static INPUT MakeKeyInput(ushort vk, bool keyUp)

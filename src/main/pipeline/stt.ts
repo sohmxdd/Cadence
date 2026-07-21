@@ -79,7 +79,7 @@ export class STTEngine {
         '-f', wavFilePath,
         '-nt',
         '--no-prints',
-        '-language', 'en',
+        '-l', 'en',
       ];
 
       console.log(`Spawning whisper.cpp with model path: ${this.modelPath}`);

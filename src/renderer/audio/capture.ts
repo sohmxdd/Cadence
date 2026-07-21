@@ -3,11 +3,6 @@ let mediaStream: MediaStream | null = null;
 let scriptNode: ScriptProcessorNode | null = null;
 let isCapturing = false;
 
-// IPC listeners from main process
-if ((window as any).electronAPI) {
-  // Listen for start/stop commands via IPC
-}
-
 async function startAudioCapture() {
   if (isCapturing) return;
 
@@ -15,17 +10,19 @@ async function startAudioCapture() {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        sampleRate: 16000,
         echoCancellation: true,
         noiseSuppression: true,
+        autoGainControl: true,
       },
     });
 
-    audioContext = new AudioContext({ sampleRate: 16000 });
+    audioContext = new AudioContext();
+    const targetSampleRate = 16000;
+    const actualSampleRate = audioContext.sampleRate;
     const source = audioContext.createMediaStreamSource(mediaStream);
 
-    // 1024 samples per frame = ~64ms chunks at 16kHz
-    scriptNode = audioContext.createScriptProcessor(1024, 1, 1);
+    // 4096 buffer size for stable audio streaming
+    scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
 
     scriptNode.onaudioprocess = (e) => {
       if (!isCapturing) return;
@@ -38,14 +35,10 @@ async function startAudioCapture() {
       }
       const rms = Math.sqrt(sum / inputData.length);
 
-      // Convert Float32Array to 16-bit PCM (Int16Array)
-      const pcm16 = new Int16Array(inputData.length);
-      for (let i = 0; i < inputData.length; i++) {
-        const s = Math.max(-1, Math.min(1, inputData[i]));
-        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
+      // Resample audio to 16kHz PCM if hardware rate differs
+      const resampledFloat = resampleTo16k(inputData, actualSampleRate, targetSampleRate);
+      const pcm16 = floatTo16BitPCM(resampledFloat);
 
-      // Send raw PCM buffer + RMS level to main process
       if ((window as any).electronAPI) {
         (window as any).electronAPI.sendAudioChunk(pcm16.buffer, rms);
       }
@@ -54,10 +47,34 @@ async function startAudioCapture() {
     source.connect(scriptNode);
     scriptNode.connect(audioContext.destination);
     isCapturing = true;
-    console.log('[AudioCapture] Mic capture started at 16kHz mono PCM');
+    console.log(`[AudioCapture] Mic capture active (${actualSampleRate}Hz -> ${targetSampleRate}Hz PCM)`);
   } catch (err) {
     console.error('[AudioCapture] Failed to access microphone:', err);
   }
+}
+
+function floatTo16BitPCM(float32Array: Float32Array): Int16Array {
+  const pcm16 = new Int16Array(float32Array.length);
+  for (let i = 0; i < float32Array.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]));
+    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return pcm16;
+}
+
+function resampleTo16k(audioBuffer: Float32Array, fromSampleRate: number, toSampleRate = 16000): Float32Array {
+  if (fromSampleRate === toSampleRate) return audioBuffer;
+  const ratio = fromSampleRate / toSampleRate;
+  const newLength = Math.round(audioBuffer.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const origIndex = i * ratio;
+    const index1 = Math.floor(origIndex);
+    const index2 = Math.min(index1 + 1, audioBuffer.length - 1);
+    const fraction = origIndex - index1;
+    result[i] = audioBuffer[index1] * (1 - fraction) + audioBuffer[index2] * fraction;
+  }
+  return result;
 }
 
 function stopAudioCapture() {
@@ -77,6 +94,5 @@ function stopAudioCapture() {
   console.log('[AudioCapture] Mic capture stopped');
 }
 
-// Global window hooks for main process trigger
 (window as any).startAudioCapture = startAudioCapture;
 (window as any).stopAudioCapture = stopAudioCapture;

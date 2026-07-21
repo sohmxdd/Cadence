@@ -5,7 +5,6 @@ console.log('[Overlay Renderer] Script loaded and initialized');
 
 const pill = document.getElementById('pill') as HTMLDivElement;
 const canvas = document.getElementById('waveform-canvas') as HTMLCanvasElement;
-const statusText = document.getElementById('status-text') as HTMLSpanElement;
 const ctx = canvas.getContext('2d')!;
 
 let currentState: OverlayState = 'hidden';
@@ -39,16 +38,12 @@ function setState(state: OverlayState, mode?: CadenceMode, text?: string) {
     pill.classList.remove('is-command-mode');
   }
 
-  if (text) {
-    statusText.textContent = text;
-  }
-
   if (state === 'hidden') {
     if (animFrameId) {
       cancelAnimationFrame(animFrameId);
       animFrameId = null;
     }
-  } else if (!animFrameId && state === 'listening') {
+  } else if (!animFrameId && (state === 'listening' || state === 'processing')) {
     animFrameId = requestAnimationFrame(renderLoop);
   }
 }
@@ -61,8 +56,17 @@ function renderLoop() {
   const gap = (canvas.width - NUM_BARS * dotW) / (NUM_BARS - 1);
   const centerY = canvas.height / 2;
 
-  // Dynamic waveform dot color: Neon Purple for Command Mode, Red for Dictation Mode
-  ctx.fillStyle = currentMode === 'command' ? '#A855F7' : '#FF3B30';
+  // Waveform dot colors per state/mode:
+  // Dictation Listening: Red (#FF3B30)
+  // Command Listening: Neon Purple (#A855F7)
+  // Processing: Neon Blue (#3B82F6)
+  if (currentState === 'processing') {
+    ctx.fillStyle = '#3B82F6';
+  } else if (currentMode === 'command') {
+    ctx.fillStyle = '#A855F7';
+  } else {
+    ctx.fillStyle = '#FF3B30';
+  }
 
   for (let i = 0; i < NUM_BARS; i++) {
     let targetHeight = 3;
@@ -71,6 +75,9 @@ function renderLoop() {
       const shimmer = 0.12 + 0.06 * Math.abs(Math.sin(phase * 1.5 + i * 0.7));
       const amp = Math.max(shimmer, audioLevel);
       targetHeight = Math.max(3, 3 + amp * 18 * Math.sin(phase + i * 0.35));
+    } else if (currentState === 'processing') {
+      // Gentle ambient wave pulse while processing audio
+      targetHeight = Math.max(3, 3 + 12 * Math.abs(Math.sin(phase * 2 + i * 0.4)));
     }
 
     // Moving average smoothing
@@ -85,7 +92,7 @@ function renderLoop() {
     ctx.fill();
   }
 
-  if (currentState === 'listening') {
+  if (currentState === 'listening' || currentState === 'processing') {
     animFrameId = requestAnimationFrame(renderLoop);
   } else {
     animFrameId = null;

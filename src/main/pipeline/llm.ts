@@ -15,21 +15,21 @@ export class LLMEngine {
     this.ollamaUrl = config?.ollamaUrl || 'http://localhost:11434';
     this.dictationModel = config?.dictationModel || 'gemma2:2b';
     this.commandModel = config?.commandModel || 'gemma2:2b';
-    this.timeoutMs = config?.timeoutMs || 8000;
+    this.timeoutMs = config?.timeoutMs || 25000; // 25s timeout for reliable Ollama inference
   }
 
   public async cleanDictation(rawTranscript: string, promptOverride?: string): Promise<string> {
     if (!rawTranscript || !rawTranscript.trim()) return '';
 
     const systemPrompt = promptOverride || 
-      `You are a precise voice dictation assistant. Clean up the provided raw speech transcript into polished, natural written text.
+      `You are Wispr Flow, an ultra-intelligent, production-grade voice dictation system. Transform raw speech transcripts into pristine, publication-ready written text.
 Rules:
-1. Fix grammar, punctuation, and capitalization.
-2. Remove verbal filler words (e.g., 'um', 'uh', 'like', 'you know', 'stutters').
-3. Keep the original wording, tone, and intended meaning intact.
-4. Output ONLY the finalized text. Do NOT add quotes, greetings, or conversational commentary.`;
+1. Strip all verbal fillers, stutters, throat clearings, false starts, and hesitation noises (e.g., 'um', 'uh', 'hm', 'like', 'you know', 'I mean', 'so yeah', repeated words).
+2. Fix grammar, spelling, punctuation, capitalization, and sentence flow seamlessly while preserving 100% of original meaning.
+3. Format numbers, technical terms, lists, and code symbols naturally.
+4. Output ONLY the finalized clean text. Do NOT wrap in quotes, do NOT add greetings or conversational preamble.`;
 
-    const userPrompt = `Raw transcript: "${rawTranscript}"`;
+    const userPrompt = `Raw speech transcript: "${rawTranscript}"`;
 
     try {
       const result = await this.queryOllama(this.dictationModel, systemPrompt, userPrompt);
@@ -43,10 +43,10 @@ Rules:
   public async processCommand(spokenInstruction: string, selectedText: string): Promise<string> {
     if (!spokenInstruction || !spokenInstruction.trim()) return selectedText;
 
-    const systemPrompt = `You are a text transformation assistant. Apply the user's spoken instruction to the target text.
+    const systemPrompt = `You are Wispr Flow Command Engine. Transform text based on the user's spoken instruction.
 Rules:
-1. Execute the instruction precisely (e.g. rewrite, reformat, summarize, translate, change tone).
-2. Output ONLY the resulting transformed text. No conversational preamble, explanation, or markdown wrappers.`;
+1. Execute the spoken instruction precisely (e.g. rewrite, fix, format, summarize, edit tone).
+2. Output ONLY the finalized transformed text. No preamble, no quotes, no markdown code blocks unless requested.`;
 
     const userPrompt = `Instruction: ${spokenInstruction}\nTarget Text:\n${selectedText}`;
 

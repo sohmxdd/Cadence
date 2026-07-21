@@ -31,7 +31,7 @@ body {
   transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
   transform: translateY(0) scale(1);
   opacity: 1;
-  min-width: 140px;
+  min-width: 180px;
   height: 36px;
 }
 
@@ -46,67 +46,26 @@ body {
 .pill.state-listening {
   border-color: rgba(255, 59, 48, 0.4);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 16px rgba(255, 59, 48, 0.25);
-  min-width: 200px;
 }
 
-.pill.state-listening #waveform-canvas {
-  display: block;
-}
-
-.pill.state-listening #status-text {
-  display: none;
-}
-
-/* Command Mode Override (Neon Purple glow) */
+/* Command Mode Listening (Neon Purple glow) */
 .pill.is-command-mode.state-listening {
   border-color: rgba(168, 85, 247, 0.6);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 18px rgba(168, 85, 247, 0.4);
 }
 
-.pill.is-command-mode.state-processing {
-  border-color: rgba(168, 85, 247, 0.6);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 18px rgba(168, 85, 247, 0.4);
-}
-
-.pill.is-command-mode.state-processing #status-text {
-  color: #c084fc;
-}
-
-/* Processing state ("Cleaning up…") */
+/* Processing state (Neon Blue wave glow) */
 .pill.state-processing {
-  border-color: rgba(10, 132, 255, 0.4);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 16px rgba(10, 132, 255, 0.25);
-  min-width: 160px;
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 18px rgba(59, 130, 246, 0.4);
 }
 
-.pill.state-processing #waveform-canvas {
-  display: none;
-}
-
-.pill.state-processing #status-text {
-  display: inline-block;
-  color: #60a5fa;
-}
-
-/* Done state ("Done") */
+/* Done state (Emerald Green glow) */
 .pill.state-done {
-  border-color: rgba(52, 199, 89, 0.4);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 16px rgba(52, 199, 89, 0.25);
-  min-width: 120px;
+  border-color: rgba(52, 199, 89, 0.5);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 16px rgba(52, 199, 89, 0.3);
 }
 
-.pill.state-done #waveform-canvas {
-  display: none;
-}
-
-.pill.state-done #status-text {
-  display: inline-block;
-  color: #34d399;
-}
-
-/* Status Text */
-.status-text {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
+#waveform-canvas {
+  display: block;
 }
