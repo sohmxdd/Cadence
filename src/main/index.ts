@@ -23,13 +23,24 @@ let audioWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isPaused = false;
 
-// Pipeline engines
-const sttEngine = new STTEngine();
-const llmEngine = new LLMEngine();
-
-// App profiles config
+// Settings & profiles config
+let settingsConfig: any = {};
 let profilesConfig: any = {};
-const profilesPath = path.join(process.cwd(), 'config', 'profiles.json');
+
+const isAppPackaged = app ? app.isPackaged : false;
+const baseConfigDir = isAppPackaged ? process.resourcesPath : process.cwd();
+
+const settingsPath = path.join(baseConfigDir, 'config', 'settings.json');
+const profilesPath = path.join(baseConfigDir, 'config', 'profiles.json');
+
+try {
+  if (fs.existsSync(settingsPath)) {
+    settingsConfig = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  }
+} catch (e) {
+  console.warn('[Cadence] Could not load settings.json config:', e);
+}
+
 try {
   if (fs.existsSync(profilesPath)) {
     profilesConfig = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
@@ -37,6 +48,19 @@ try {
 } catch (e) {
   console.warn('[Cadence] Could not load profiles.json config:', e);
 }
+
+// Pipeline engines initialized with settings.json configuration
+const sttEngine = new STTEngine({
+  whisperBinaryPath: settingsConfig?.whisper?.binaryPath || undefined,
+  modelPath: settingsConfig?.whisper?.modelPath ? path.resolve(baseConfigDir, settingsConfig.whisper.modelPath) : undefined,
+});
+
+const llmEngine = new LLMEngine({
+  ollamaUrl: settingsConfig?.ollama?.url,
+  dictationModel: settingsConfig?.ollama?.dictationModel,
+  commandModel: settingsConfig?.ollama?.commandModel,
+  timeoutMs: settingsConfig?.ollama?.timeoutMs,
+});
 
 // Audio recording buffer (PCM 16-bit 16kHz)
 const audioChunks: Buffer[] = [];
@@ -219,7 +243,7 @@ const createSystemTray = () => {
   buildContextMenu();
 };
 
-function updateOverlayState(state: 'hidden' | 'listening' | 'processing' | 'done' | 'cancelled', mode?: CadenceMode, text?: string) {
+function updateOverlayState(state: 'hidden' | 'listening' | 'processing' | 'done' | 'cancelled' | 'error', mode?: CadenceMode, text?: string) {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
 
   logApp(`[Overlay State Change] state=${state}, mode=${mode}, text=${text}`);
@@ -231,6 +255,16 @@ function updateOverlayState(state: 'hidden' | 'listening' | 'processing' | 'done
         overlayWindow.hide();
       }
     }, 220);
+  } else if (state === 'error') {
+    if (!overlayWindow.isVisible()) {
+      overlayWindow.showInactive();
+    }
+    overlayWindow.webContents.send('overlay-state', { state, mode, text });
+    setTimeout(() => {
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        updateOverlayState('hidden');
+      }
+    }, 1800);
   } else {
     if (!overlayWindow.isVisible()) {
       logApp('Overlay window showInactive() called');
@@ -246,6 +280,12 @@ app.on('ready', () => {
   createOverlayWindow();
   createAudioWindow();
   createSystemTray();
+
+  // Handle incoming audio error
+  ipcMain.on('audio-error', (_event, errorMsg: string) => {
+    logApp(`⚠️ [Audio Capture Error] ${errorMsg}`);
+    updateOverlayState('error', 'dictation', 'Microphone Error');
+  });
 
   // Handle incoming PCM audio chunks from hidden renderer
   ipcMain.on('audio-chunk', (_event, arrayBuffer: ArrayBuffer, rms: number) => {
@@ -268,6 +308,7 @@ app.on('ready', () => {
   // Pipeline lock to prevent concurrent overlapping executions
   let isPipelineBusy = false;
   let cachedFgApp: { processName: string; windowTitle: string } | null = null;
+  let cachedSelectedText = '';
 
   nativeBridge.on('hotkey-down', async ({ mode }: { mode: CadenceMode }) => {
     if (isPaused) {
@@ -286,6 +327,13 @@ app.on('ready', () => {
     cachedFgApp = await nativeBridge?.getForegroundApp() || null;
     logApp(`[Target Window Captured at Hotkey-Down] ${cachedFgApp?.processName} ("${cachedFgApp?.windowTitle}")`);
 
+    if (mode === 'command') {
+      cachedSelectedText = await nativeBridge?.getSelectedText() || '';
+      logApp(`[Selection Captured at Hotkey-Down] ${cachedSelectedText.length} chars: "${cachedSelectedText.substring(0, 60)}"`);
+    } else {
+      cachedSelectedText = '';
+    }
+
     isRecording = true;
     audioChunks.length = 0; // Clear previous audio buffer
 
@@ -299,11 +347,34 @@ app.on('ready', () => {
     }
   });
 
-  nativeBridge.on('mode-change', ({ mode }: { mode: CadenceMode }) => {
+  nativeBridge.on('mode-change', async ({ mode }: { mode: CadenceMode }) => {
     if (isPaused) return;
     logApp(`✨ [MODE SWITCH] Switched to: ${mode.toUpperCase()}`);
+    if (mode === 'command' && !cachedSelectedText) {
+      cachedSelectedText = await nativeBridge?.getSelectedText() || '';
+      logApp(`[Selection Captured at Mode-Switch] ${cachedSelectedText.length} chars: "${cachedSelectedText.substring(0, 60)}"`);
+    }
     updateOverlayState('listening', mode);
   });
+
+function computeAudioMetrics(pcmChunks: Buffer[]): { durationMs: number; rms: number } {
+  const totalBytes = pcmChunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const totalSamples = Math.floor(totalBytes / 2);
+  const durationMs = Math.round((totalSamples / 16000) * 1000);
+
+  if (totalSamples === 0) return { durationMs: 0, rms: 0 };
+
+  let sumSquare = 0;
+  for (const chunk of pcmChunks) {
+    for (let i = 0; i < chunk.length - 1; i += 2) {
+      const sample = chunk.readInt16LE(i) / 32768.0;
+      sumSquare += sample * sample;
+    }
+  }
+
+  const rms = Math.sqrt(sumSquare / totalSamples);
+  return { durationMs, rms };
+}
 
   nativeBridge.on('hotkey-up', async ({ mode, duration }: { mode: CadenceMode; duration: number }) => {
     if (isPaused) return;
@@ -322,14 +393,15 @@ app.on('ready', () => {
     }
 
     const totalBytesCaptured = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    logApp(`Audio capture stopped, ${totalBytesCaptured} bytes captured`);
+    const { durationMs, rms } = computeAudioMetrics(audioChunks);
+    logApp(`Audio capture stopped: ${totalBytesCaptured} bytes, ${durationMs}ms duration, RMS ${rms.toFixed(4)}`);
 
     // Transition overlay to processing state
     updateOverlayState('processing', mode);
 
-    // Process audio buffer
-    if (audioChunks.length === 0) {
-      logApp('[Cadence] Audio buffer empty, skipping transcription.');
+    // Process audio buffer threshold check
+    if (audioChunks.length === 0 || durationMs < 350 || rms < 0.005) {
+      logApp(`[Cadence] Audio discarded (duration ${durationMs}ms < 350ms or RMS ${rms.toFixed(4)} < 0.005). Skipping STT.`);
       updateOverlayState('hidden');
       isPipelineBusy = false;
       return;
@@ -346,7 +418,8 @@ app.on('ready', () => {
 
       if (!rawTranscript || !rawTranscript.trim() || rawTranscript.includes('missing')) {
         logApp(`[STT Output Warning] ${rawTranscript}`);
-        updateOverlayState('hidden');
+        const errLabel = rawTranscript.includes('missing') ? 'Whisper Binary Missing' : 'STT Output Error';
+        updateOverlayState('error', mode, errLabel);
         return;
       }
 
@@ -356,10 +429,17 @@ app.on('ready', () => {
       const promptOverride = profile?.promptOverride;
 
       // 3. LLM Cleanup / Command execution via Ollama
-      if (mode === 'command') {
-        resultText = await llmEngine.processCommand(rawTranscript, '');
-      } else {
-        resultText = await llmEngine.cleanDictation(rawTranscript, promptOverride);
+      try {
+        if (mode === 'command') {
+          logApp(`[Executing Command Mode] Instruction: "${rawTranscript}" | Selected Text (${cachedSelectedText.length} chars): "${cachedSelectedText.substring(0, 60)}"`);
+          resultText = await llmEngine.processCommand(rawTranscript, cachedSelectedText);
+        } else {
+          resultText = await llmEngine.cleanDictation(rawTranscript, promptOverride);
+        }
+      } catch (llmErr: any) {
+        logApp(`[LLM Connection Error] ${llmErr?.message || llmErr}`);
+        updateOverlayState('error', mode, 'Ollama Offline');
+        return;
       }
 
       // 4. Inject finalized text — C# helper will restore window focus via stored HWND
@@ -372,7 +452,7 @@ app.on('ready', () => {
       }
     } catch (err) {
       logApp(`[Pipeline Error] ${err}`);
-      updateOverlayState('hidden');
+      updateOverlayState('error', mode, 'Pipeline Error');
     } finally {
       try {
         if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath);

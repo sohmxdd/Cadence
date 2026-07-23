@@ -5,7 +5,7 @@
     "url": "http://localhost:11434",
     "dictationModel": "gemma3:1b",
     "commandModel": "gemma3:1b",
-    "timeoutMs": 5000
+    "timeoutMs": 60000
   },
   "whisper": {
     "binaryPath": "",
@@ -14,6 +14,5 @@
   "injection": {
     "longTextThreshold": 100,
     "interKeystrokeDelayMs": 5
-  },
-  "launchOnStartup": false
+  }
 }
