@@ -102,6 +102,8 @@ export class STTEngine {
         '--no-prints',
         '-l', language,
         '-sns', // Suppress non-speech tokens to prevent repetitions
+        '--vad', // Enable Voice Activity Detection
+        '--no-speech-thold', '0.6', // Reject silent/no-speech segments > 60% prob
       ];
 
       console.log(`Spawning whisper.cpp with model path: ${this.modelPath}`);

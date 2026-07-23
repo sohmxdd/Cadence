@@ -1,10 +1,11 @@
-type OverlayState = 'hidden' | 'listening' | 'processing' | 'done' | 'cancelled';
+type OverlayState = 'hidden' | 'listening' | 'processing' | 'done' | 'cancelled' | 'error';
 type CadenceMode = 'dictation' | 'command';
 
 console.log('[Overlay Renderer] Script loaded and initialized');
 
 const pill = document.getElementById('pill') as HTMLDivElement;
 const canvas = document.getElementById('waveform-canvas') as HTMLCanvasElement;
+const statusLabel = document.getElementById('status-label') as HTMLSpanElement;
 const ctx = canvas.getContext('2d')!;
 
 let currentState: OverlayState = 'hidden';
@@ -36,6 +37,10 @@ function setState(state: OverlayState, mode?: CadenceMode, text?: string) {
     pill.classList.add('is-command-mode');
   } else {
     pill.classList.remove('is-command-mode');
+  }
+
+  if (text && statusLabel) {
+    statusLabel.textContent = text;
   }
 
   if (state === 'hidden') {

@@ -1,202 +1,182 @@
+using System;
+using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
-namespace CadenceHelper;
-
-/// <summary>
-/// Cadence Native Helper — minimal Windows helper process.
-/// Responsibilities:
-///   1. Global low-level keyboard hook (WH_KEYBOARD_LL) with keydown/keyup
-///   2. Text injection via SetForegroundWindow + clipboard Ctrl+V
-///   3. GetForegroundWindow app detection (with HWND capture)
-///   4. Named pipe IPC with Electron main process
-/// </summary>
-class Program
+namespace CadenceHelper
 {
-    private static KeyboardHook? _keyboardHook;
-    private static readonly CancellationTokenSource _cts = new();
-    private static NamedPipeServerStream? _pipeServer;
-    private static StreamWriter? _pipeWriter;
-    private static readonly object _writeLock = new();
-
-    // Top-level window HWND captured at get_foreground time (e.g. VS Code BrowserWindow)
-    private static IntPtr _targetHwnd = IntPtr.Zero;
-    // Exact focused child HWND captured at get_foreground time (e.g. Chrome_RenderWidgetHostHWND inside VS Code).
-    // This is the control that had the text cursor — ensures paste goes to the right editor pane.
-    private static IntPtr _targetFocusHwnd = IntPtr.Zero;
-
-    [DllImport("user32.dll")]
-    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-    [DllImport("kernel32.dll")]
-    private static extern uint GetCurrentThreadId();
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetFocus();
-
-    static async Task Main(string[] args)
+    class Program
     {
-        Console.Error.WriteLine("[CadenceHelper] Starting...");
+        private static KeyboardHook _keyboardHook;
+        private static readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        private static NamedPipeServerStream _pipeServer;
+        private static StreamWriter _pipeWriter;
+        private static readonly object _writeLock = new object();
 
-        // Start keyboard hook on a dedicated STA thread with message pump
-        var hookThread = new Thread(() =>
+        private static IntPtr _targetHwnd = IntPtr.Zero;
+        private static IntPtr _targetFocusHwnd = IntPtr.Zero;
+
+        [DllImport("user32.dll")]
+        private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetFocus();
+
+        static void Main(string[] args)
         {
-            _keyboardHook = new KeyboardHook();
-            _keyboardHook.KeyEvent += OnKeyEvent;
-            _keyboardHook.Start();
-        });
-        hookThread.SetApartmentState(ApartmentState.STA);
-        hookThread.IsBackground = true;
-        hookThread.Start();
+            Console.Error.WriteLine("[CadenceHelper] Starting...");
 
-        // Run pipe server
-        await RunPipeServerAsync(_cts.Token);
-    }
+            var hookThread = new Thread(() =>
+            {
+                _keyboardHook = new KeyboardHook();
+                _keyboardHook.KeyEvent += OnKeyEvent;
+                _keyboardHook.Start();
+            });
+            hookThread.SetApartmentState(ApartmentState.STA);
+            hookThread.IsBackground = true;
+            hookThread.Start();
 
-    private static void OnKeyEvent(object? sender, KeyEventArgs e)
-    {
-        // Explicit raw logging for modifier / activation key events
-        if (e.KeyName.Contains("CTRL") || e.KeyName.Contains("SHIFT") || e.KeyName == "RIGHT CTRL")
-        {
-            Console.Error.WriteLine($"[HOOK RAW KEY] {e.KeyName} | State: {(e.IsDown ? "DOWN" : "UP")} | VkCode: 0x{e.VkCode:X2}");
+            RunPipeServerAsync(_cts.Token).Wait();
         }
 
-        var msg = new
+        private static void OnKeyEvent(object sender, KeyEventArgs e)
         {
-            type = "key",
-            key = e.KeyName,
-            vkCode = e.VkCode,
-            state = e.IsDown ? "down" : "up",
-            shift = e.ShiftPressed,
-            ctrl = e.CtrlPressed,
-            alt = e.AltPressed,
-            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        };
+            if (e.KeyName.Contains("CTRL") || e.KeyName.Contains("SHIFT") || e.KeyName == "RIGHT CTRL")
+            {
+                Console.Error.WriteLine("[HOOK RAW KEY] " + e.KeyName + " | State: " + (e.IsDown ? "DOWN" : "UP") + " | VkCode: 0x" + e.VkCode.ToString("X2"));
+            }
 
-        SendMessage(msg);
-    }
+            string json = string.Format(
+                "{{\"type\":\"key\",\"key\":\"{0}\",\"vkCode\":{1},\"state\":\"{2}\",\"shift\":{3},\"ctrl\":{4},\"alt\":{5},\"timestamp\":{6}}}",
+                e.KeyName,
+                e.VkCode,
+                e.IsDown ? "down" : "up",
+                e.ShiftPressed ? "true" : "false",
+                e.CtrlPressed ? "true" : "false",
+                e.AltPressed ? "true" : "false",
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            );
 
-    private static void SendMessage(object msg)
-    {
-        lock (_writeLock)
+            SendMessageJson(json);
+        }
+
+        private static void SendMessageJson(string json)
         {
-            if (_pipeWriter != null)
+            lock (_writeLock)
+            {
+                if (_pipeWriter != null)
+                {
+                    try
+                    {
+                        Console.Error.WriteLine("[CadenceHelper] [HELPER IPC TX] " + json);
+                        _pipeWriter.WriteLine(json);
+                        _pipeWriter.Flush();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine("[CadenceHelper] [HELPER IPC ERROR] Pipe write error: " + ex.Message);
+                    }
+                }
+            }
+        }
+
+        private static async Task RunPipeServerAsync(CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    var json = JsonSerializer.Serialize(msg);
-                    Console.Error.WriteLine($"[CadenceHelper] [HELPER IPC TX] {json}");
-                    _pipeWriter.WriteLine(json);
-                    _pipeWriter.Flush();
+                    _pipeServer = new NamedPipeServerStream(
+                        "cadence-helper",
+                        PipeDirection.InOut,
+                        NamedPipeServerStream.MaxAllowedServerInstances,
+                        PipeTransmissionMode.Byte,
+                        PipeOptions.Asynchronous);
+
+                    Console.Error.WriteLine("[CadenceHelper] Waiting for Electron connection on pipe 'cadence-helper'...");
+                    await _pipeServer.WaitForConnectionAsync(ct);
+                    Console.Error.WriteLine("[CadenceHelper] [HELPER PIPE CONNECT] Electron connected to pipe.");
+
+                    using (var reader = new StreamReader(_pipeServer, Encoding.UTF8, true))
+                    {
+                        lock (_writeLock)
+                        {
+                            _pipeWriter = new StreamWriter(_pipeServer, Encoding.UTF8) { AutoFlush = true };
+                        }
+
+                        SendMessageJson("{\"type\":\"ready\",\"version\":\"0.1.0\"}");
+
+                        while (_pipeServer.IsConnected && !ct.IsCancellationRequested)
+                        {
+                            var line = await reader.ReadLineAsync();
+                            if (line == null) break;
+
+                            Console.Error.WriteLine("[CadenceHelper] [HELPER IPC RX] " + line);
+                            HandleCommand(line);
+                        }
+                    }
+
+                    Console.Error.WriteLine("[CadenceHelper] [HELPER PIPE DISCONNECT] Electron disconnected from pipe.");
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"[CadenceHelper] [HELPER IPC ERROR] Pipe write error: {ex.Message}");
+                    Console.Error.WriteLine("[CadenceHelper] [HELPER PIPE ERROR] Pipe error: " + ex.Message);
+                    Thread.Sleep(500);
                 }
-            }
-        }
-    }
-
-    private static async Task RunPipeServerAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                _pipeServer = new NamedPipeServerStream(
-                    "cadence-helper",
-                    PipeDirection.InOut,
-                    NamedPipeServerStream.MaxAllowedServerInstances,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
-
-                Console.Error.WriteLine("[CadenceHelper] Waiting for Electron connection on pipe 'cadence-helper'...");
-                await _pipeServer.WaitForConnectionAsync(ct);
-                Console.Error.WriteLine("[CadenceHelper] [HELPER PIPE CONNECT] Electron connected to pipe.");
-
-                using (var reader = new StreamReader(_pipeServer, Encoding.UTF8, leaveOpen: true))
+                finally
                 {
                     lock (_writeLock)
                     {
-                        _pipeWriter = new StreamWriter(_pipeServer, Encoding.UTF8) { AutoFlush = true };
+                        if (_pipeWriter != null)
+                        {
+                            try { _pipeWriter.Dispose(); } catch {}
+                            _pipeWriter = null;
+                        }
                     }
 
-                    // Send ready message
-                    SendMessage(new { type = "ready", version = "0.1.0" });
-
-                    // Read commands from Electron
-                    while (_pipeServer.IsConnected && !ct.IsCancellationRequested)
+                    if (_pipeServer != null)
                     {
-                        var line = await reader.ReadLineAsync(ct);
-                        if (line == null) break;
-
-                        Console.Error.WriteLine($"[CadenceHelper] [HELPER IPC RX] {line}");
-                        await HandleCommandAsync(line);
+                        if (_pipeServer.IsConnected)
+                        {
+                            try { _pipeServer.Disconnect(); } catch { }
+                        }
+                        _pipeServer.Dispose();
+                        _pipeServer = null;
                     }
-                }
-
-                Console.Error.WriteLine("[CadenceHelper] [HELPER PIPE DISCONNECT] Electron disconnected from pipe.");
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[CadenceHelper] [HELPER PIPE ERROR] Pipe error: {ex.Message}");
-                await Task.Delay(500, ct);
-            }
-            finally
-            {
-                lock (_writeLock)
-                {
-                    _pipeWriter?.Dispose();
-                    _pipeWriter = null;
-                }
-
-                if (_pipeServer != null)
-                {
-                    if (_pipeServer.IsConnected)
-                    {
-                        try { _pipeServer.Disconnect(); } catch { }
-                    }
-                    _pipeServer.Dispose();
-                    _pipeServer = null;
                 }
             }
         }
-    }
 
-    private static async Task HandleCommandAsync(string json)
-    {
-        try
+        private static void HandleCommand(string json)
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            var type = root.GetProperty("type").GetString();
-
-            switch (type)
+            try
             {
-                case "ping":
-                    SendMessage(new { type = "pong" });
-                    break;
+                if (json.Contains("\"type\":\"ping\""))
+                {
+                    SendMessageJson("{\"type\":\"pong\"}");
+                    return;
+                }
 
-                case "get_foreground":
-                    // Capture the foreground app AND its HWND for later focus restoration
+                if (json.Contains("\"type\":\"get_foreground\""))
+                {
                     var fgInfo = ForegroundDetector.GetForegroundApp();
                     _targetHwnd = fgInfo.Hwnd;
-
-                    // ALSO capture the focused child control HWND within the foreground app.
-                    // This is e.g. Chrome_RenderWidgetHostHWND inside VS Code, or the Edit
-                    // control inside Notepad — the exact place where the user's cursor is.
-                    // Without this, SetForegroundWindow only focuses the top-level window,
-                    // and Ctrl+V may land in the wrong pane (terminal vs editor, etc.).
                     _targetFocusHwnd = IntPtr.Zero;
+
                     if (fgInfo.Hwnd != IntPtr.Zero)
                     {
-                        uint fgTid = GetWindowThreadProcessId(fgInfo.Hwnd, out _);
+                        uint dummyProcId;
+                        uint fgTid = GetWindowThreadProcessId(fgInfo.Hwnd, out dummyProcId);
                         uint myTid = GetCurrentThreadId();
                         bool attached = false;
                         if (fgTid != 0 && fgTid != myTid)
@@ -210,36 +190,69 @@ class Program
                         }
                     }
 
-                    Console.Error.WriteLine($"[CadenceHelper] [FOREGROUND CAPTURED] Process={fgInfo.ProcessName}, TopHWND=0x{fgInfo.Hwnd:X}, FocusHWND=0x{_targetFocusHwnd:X}, Title=\"{fgInfo.WindowTitle}\"");
+                    Console.Error.WriteLine("[CadenceHelper] [FOREGROUND CAPTURED] Process=" + fgInfo.ProcessName + ", TopHWND=0x" + fgInfo.Hwnd.ToString("X") + ", FocusHWND=0x" + _targetFocusHwnd.ToString("X") + ", Title=\"" + fgInfo.WindowTitle + "\"");
 
-                    SendMessage(new
-                    {
-                        type = "foreground",
-                        processName = fgInfo.ProcessName,
-                        windowTitle = fgInfo.WindowTitle
-                    });
-                    break;
+                    string resp = string.Format(
+                        "{{\"type\":\"foreground\",\"processName\":\"{0}\",\"windowTitle\":\"{1}\"}}",
+                        EscapeJson(fgInfo.ProcessName),
+                        EscapeJson(fgInfo.WindowTitle)
+                    );
+                    SendMessageJson(resp);
+                    return;
+                }
 
-                case "inject":
-                    var text = root.GetProperty("text").GetString() ?? "";
+                if (json.Contains("\"type\":\"get_selection\""))
+                {
+                    var selText = TextInjector.GetSelectedText(_targetHwnd, _targetFocusHwnd);
+                    string resp = string.Format(
+                        "{{\"type\":\"selection\",\"text\":\"{0}\"}}",
+                        EscapeJson(selText)
+                    );
+                    SendMessageJson(resp);
+                    return;
+                }
 
-                    Console.Error.WriteLine($"[CadenceHelper] [INJECT] Injecting {text.Length} chars | TopHWND=0x{_targetHwnd:X} | FocusHWND=0x{_targetFocusHwnd:X}");
+                if (json.Contains("\"type\":\"inject\""))
+                {
+                    string text = ExtractJsonStringField(json, "text");
+                    Console.Error.WriteLine("[CadenceHelper] [INJECT] Injecting " + text.Length + " chars | TopHWND=0x" + _targetHwnd.ToString("X") + " | FocusHWND=0x" + _targetFocusHwnd.ToString("X"));
 
-                    // Pass both the top-level window AND the exact focused child control.
-                    // TextInjector will restore focus to the exact control before Ctrl+V.
                     TextInjector.InjectIntoWindow(text, _targetHwnd, _targetFocusHwnd);
 
-                    SendMessage(new { type = "inject_done", length = text.Length });
-                    break;
+                    string resp = string.Format("{{\"type\":\"inject_done\",\"length\":{0}}}", text.Length);
+                    SendMessageJson(resp);
+                    return;
+                }
 
-                default:
-                    SendMessage(new { type = "error", message = $"Unknown command: {type}" });
-                    break;
+                SendMessageJson("{\"type\":\"error\",\"message\":\"Unknown command\"}");
+            }
+            catch (Exception ex)
+            {
+                SendMessageJson("{\"type\":\"error\",\"message\":\"" + EscapeJson(ex.Message) + "\"}");
             }
         }
-        catch (Exception ex)
+
+        private static string EscapeJson(string s)
         {
-            SendMessage(new { type = "error", message = ex.Message });
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
+        }
+
+        private static string ExtractJsonStringField(string json, string field)
+        {
+            string key = "\"" + field + "\":\"";
+            int idx = json.IndexOf(key);
+            if (idx == -1) return "";
+            int start = idx + key.Length;
+            int end = start;
+            while (end < json.Length)
+            {
+                if (json[end] == '"' && json[end - 1] != '\\') break;
+                end++;
+            }
+            if (end >= json.Length) return "";
+            string raw = json.Substring(start, end - start);
+            return raw.Replace("\\n", "\n").Replace("\\r", "\r").Replace("\\\"", "\"").Replace("\\\\", "\\");
         }
     }
 }

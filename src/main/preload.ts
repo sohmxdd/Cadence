@@ -13,4 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendAudioChunk: (buffer: ArrayBuffer, rms: number) => {
     ipcRenderer.send('audio-chunk', buffer, rms);
   },
+  sendAudioError: (errorMsg: string) => {
+    ipcRenderer.send('audio-error', errorMsg);
+  },
 });

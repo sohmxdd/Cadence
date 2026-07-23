@@ -66,6 +66,36 @@ body {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 16px rgba(52, 199, 89, 0.3);
 }
 
+/* Error state (Warning Red shake pulse) */
+.pill.state-error {
+  border-color: rgba(239, 68, 68, 0.9);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 24px rgba(239, 68, 68, 0.6);
+  animation: error-shake 0.35s ease-in-out;
+}
+
+@keyframes error-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+.status-label {
+  display: none;
+  color: #F87171;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.pill.state-error .status-label {
+  display: inline-block;
+}
+
+.pill.state-error #waveform-canvas {
+  display: none;
+}
+
 #waveform-canvas {
   display: block;
 }

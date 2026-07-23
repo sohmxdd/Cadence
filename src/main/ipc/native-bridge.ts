@@ -90,7 +90,6 @@ export class NativeBridge extends EventEmitter {
       path.join(app.getAppPath(), 'native-helper', 'bin', 'publish', 'CadenceHelper.exe'),
       path.join(process.cwd(), 'native-helper', 'bin', 'publish', 'CadenceHelper.exe'),
       path.join(__dirname, '../../native-helper/bin/publish/CadenceHelper.exe'),
-      'c:\\Users\\SOHAM\\Cadence\\native-helper\\bin\\publish\\CadenceHelper.exe',
     ];
 
     for (const p of candidates) {
@@ -216,6 +215,15 @@ export class NativeBridge extends EventEmitter {
       return;
     }
 
+    if (msg.type === 'selection') {
+      const resolver = this.pendingRequests.get('get_selection');
+      if (resolver) {
+        this.pendingRequests.delete('get_selection');
+        resolver(msg);
+      }
+      return;
+    }
+
     if (msg.type === 'inject_done') {
       const resolver = this.pendingRequests.get('inject');
       if (resolver) {
@@ -279,6 +287,15 @@ export class NativeBridge extends EventEmitter {
       // Always use clipboard injection (Ctrl+V) — most reliable across all apps.
       // C# side will SetForegroundWindow(storedHwnd) before pasting.
       this.send({ type: 'inject', text, useClipboard: true });
+    });
+  }
+
+  public async getSelectedText(): Promise<string> {
+    return new Promise((resolve) => {
+      this.pendingRequests.set('get_selection', (data) => {
+        resolve(data.text || '');
+      });
+      this.send({ type: 'get_selection' });
     });
   }
 

@@ -10,8 +10,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "eslint --ext .ts,.tsx .",
-    "test:hotkey": "cross-env CADENCE_HOTKEY_TEST=1 electron-forge start"
+    "lint": "eslint --ext .ts,.tsx ."
   },
   "keywords": [
     "voice",
@@ -50,7 +49,6 @@
     "vite": "^5.4.21"
   },
   "dependencies": {
-    "electron-squirrel-startup": "^1.0.1",
-    "node-global-key-listener": "^0.3.0"
+    "electron-squirrel-startup": "^1.0.1"
   }
 }

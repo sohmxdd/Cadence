@@ -50,6 +50,9 @@ async function startAudioCapture() {
     console.log(`[AudioCapture] Mic capture active (${actualSampleRate}Hz -> ${targetSampleRate}Hz PCM)`);
   } catch (err) {
     console.error('[AudioCapture] Failed to access microphone:', err);
+    if ((window as any).electronAPI && (window as any).electronAPI.sendAudioError) {
+      (window as any).electronAPI.sendAudioError((err as Error)?.message || 'Microphone error');
+    }
   }
 }
 
