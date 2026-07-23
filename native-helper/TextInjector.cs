@@ -71,7 +71,25 @@ namespace CadenceHelper
                     ReleaseModifiers();
                     Thread.Sleep(30);
 
-                    try { System.Windows.Forms.Clipboard.Clear(); } catch {}
+                    // Read clipboard BEFORE modifying it — establishes stale-detection baseline.
+                    // If Clipboard.Clear() silently fails and Ctrl+C is a no-op (nothing selected),
+                    // postCtrlC will equal this value, letting us detect the stale case.
+                    string preOperationClipboard = "";
+                    try
+                    {
+                        if (System.Windows.Forms.Clipboard.ContainsText())
+                            preOperationClipboard = System.Windows.Forms.Clipboard.GetText();
+                    }
+                    catch { }
+                    Console.Error.WriteLine("[TextInjector] GetSelectedText pre-op clipboard: " + preOperationClipboard.Length + " chars");
+
+                    try { System.Windows.Forms.Clipboard.Clear(); }
+                    catch (Exception clearEx)
+                    {
+                        // This is the mechanism that causes stale-clipboard contamination:
+                        // if Clear() fails, the old content stays, and a Ctrl+C no-op leaves it there.
+                        Console.Error.WriteLine("[TextInjector] Clipboard.Clear() FAILED — stale content may remain: " + clearEx.Message);
+                    }
                     Thread.Sleep(30);
 
                     uint currentTid = GetCurrentThreadId();
@@ -121,10 +139,25 @@ namespace CadenceHelper
                         SendInput(1, ctrlUp, cbSize);
                         Thread.Sleep(60);
 
-                        if (System.Windows.Forms.Clipboard.ContainsText())
+                        string postCtrlCClipboard = "";
+                        try
                         {
-                            selectedText = System.Windows.Forms.Clipboard.GetText();
-                            Console.Error.WriteLine("[TextInjector] GetSelectedText captured " + selectedText.Length + " chars");
+                            if (System.Windows.Forms.Clipboard.ContainsText())
+                                postCtrlCClipboard = System.Windows.Forms.Clipboard.GetText();
+                        }
+                        catch { }
+
+                        // Stale detection: if clipboard is empty OR matches what was there before
+                        // the Clear() attempt, then nothing was actually selected (Ctrl+C was a no-op).
+                        if (!string.IsNullOrEmpty(postCtrlCClipboard) && postCtrlCClipboard != preOperationClipboard)
+                        {
+                            selectedText = postCtrlCClipboard;
+                            Console.Error.WriteLine("[TextInjector] GetSelectedText captured " + selectedText.Length + " chars (clipboard changed)");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine("[TextInjector] GetSelectedText: nothing selected — pre=" + preOperationClipboard.Length + " chars, post=" + postCtrlCClipboard.Length + " chars, unchanged=" + (postCtrlCClipboard == preOperationClipboard).ToString());
+                            selectedText = "";
                         }
                     }
                     finally

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage, shell, clipboard } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -328,7 +328,18 @@ app.on('ready', () => {
     logApp(`[Target Window Captured at Hotkey-Down] ${cachedFgApp?.processName} ("${cachedFgApp?.windowTitle}")`);
 
     if (mode === 'command') {
+      // Stale-clipboard detection: read the clipboard BEFORE the C# helper runs Ctrl+C.
+      // If getSelectedText() returns the same content that was already there, it means
+      // Clipboard.Clear() failed (or was a no-op) and nothing was actually selected.
+      const preSelectionClipboard = clipboard.readText();
+      logApp(`[Selection Pre-Op Clipboard] ${preSelectionClipboard.length} chars: "${preSelectionClipboard.substring(0, 60)}"`);
+
       cachedSelectedText = await nativeBridge?.getSelectedText() || '';
+
+      if (cachedSelectedText && cachedSelectedText === preSelectionClipboard) {
+        logApp(`[Selection STALE DETECTED] getSelectedText returned pre-existing clipboard content — treating as no selection.`);
+        cachedSelectedText = '';
+      }
       logApp(`[Selection Captured at Hotkey-Down] ${cachedSelectedText.length} chars: "${cachedSelectedText.substring(0, 60)}"`);
     } else {
       cachedSelectedText = '';
@@ -351,7 +362,13 @@ app.on('ready', () => {
     if (isPaused) return;
     logApp(`✨ [MODE SWITCH] Switched to: ${mode.toUpperCase()}`);
     if (mode === 'command' && !cachedSelectedText) {
+      const preSelectionClipboard = clipboard.readText();
+      logApp(`[Selection Pre-Op Clipboard (mode-switch)] ${preSelectionClipboard.length} chars: "${preSelectionClipboard.substring(0, 60)}"`);
       cachedSelectedText = await nativeBridge?.getSelectedText() || '';
+      if (cachedSelectedText && cachedSelectedText === preSelectionClipboard) {
+        logApp(`[Selection STALE DETECTED at mode-switch] Treating as no selection.`);
+        cachedSelectedText = '';
+      }
       logApp(`[Selection Captured at Mode-Switch] ${cachedSelectedText.length} chars: "${cachedSelectedText.substring(0, 60)}"`);
     }
     updateOverlayState('listening', mode);

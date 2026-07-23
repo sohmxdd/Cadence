@@ -102,22 +102,14 @@ STRICT RULES:
 
     let cleaned = llmResult.trim();
 
-    // 1. Strip code block markers & enclosing quotes
+    // 1. Strip code block markers
     cleaned = cleaned.replace(/^```[a-z]*\n?/gi, '').replace(/\n?```$/gi, '').trim();
 
-    const quotePairs = [
-      ['"', '"'],
-      ["'", "'"],
-      ['“', '”'],
-      ['‘', '’'],
-      ['`', '`']
-    ];
-
-    for (const [start, end] of quotePairs) {
-      if (cleaned.startsWith(start) && cleaned.endsWith(end) && cleaned.length >= start.length + end.length) {
-        cleaned = cleaned.substring(start.length, cleaned.length - end.length).trim();
-      }
-    }
+    // 2. Strip enclosing quote characters using explicit Unicode codepoints so curly/smart
+    //    quotes are reliably matched regardless of source file encoding.
+    //    \u201C = LEFT DOUBLE QUOTATION MARK, \u201D = RIGHT DOUBLE QUOTATION MARK
+    //    \u2018 = LEFT SINGLE QUOTATION MARK, \u2019 = RIGHT SINGLE QUOTATION MARK
+    cleaned = cleaned.replace(/^[\u201C\u201D\u2018\u2019"'`]+/, '').replace(/[\u201C\u201D\u2018\u2019"'`]+$/, '').trim();
 
     // 2. Remove assistant meta-chatter sentences & preambles
     const metaPatterns = [
@@ -133,19 +125,28 @@ STRICT RULES:
       cleaned = cleaned.replace(pattern, '').trim();
     }
 
-    // 3. Strip markdown headers (# ## ###) and bold/italic markup (**text**, *text*, __text__)
+    // 3. Strip markdown headers (# ## ###)
     cleaned = cleaned.replace(/^#+\s+/gm, '');
-    cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1');
-    cleaned = cleaned.replace(/__([^_]+)__/g, '$1');
 
-    // 4. Fix missing spaces after punctuation marks (e.g. "while.Please" -> "while. Please")
-    cleaned = cleaned.replace(/([.!?])([A-Za-z])/g, '$1 $2');
+    // 4. Strip bold and italic markdown markup, in strict order:
+    //    a. **bold** pairs first
+    cleaned = cleaned.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+    //    b. *italic* pairs (safe to run after bold — ** already consumed)
+    cleaned = cleaned.replace(/\*([^*\n]+)\*/g, '$1');
+    //    c. Lone unpaired ** or * left over (e.g. opening **Subject: with no closing)
+    cleaned = cleaned.replace(/\*\*/g, '').replace(/\*/g, '');
+    //    d. __bold__ and _italic_ underscore variants
+    cleaned = cleaned.replace(/__([^_\n]+)__/g, '$1');
+    cleaned = cleaned.replace(/_([^_\n]+)_/g, '$1');
 
     // 5. Deduplicate repeated blocks & sentences
     cleaned = this.deduplicateBlocks(cleaned);
 
-    // 6. Fallback safety
-    return cleaned;
+    // 6. Fix missing spaces after punctuation — runs LAST, after all stripping and dedup,
+    //    so it catches any adjacencies introduced by the strip operations above.
+    cleaned = cleaned.replace(/([.!?])([A-Za-z])/g, '$1 $2');
+
+    return cleaned.trim();
   }
 
   /**
