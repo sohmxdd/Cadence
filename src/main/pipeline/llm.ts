@@ -1,3 +1,16 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+
+const LOG_FILE = path.join(os.tmpdir(), 'cadence-app.log');
+function logLLM(msg: string) {
+  const line = `[${new Date().toISOString()}] [LLMEngine] ${msg}`;
+  console.log(line);
+  try {
+    fs.appendFileSync(LOG_FILE, line + '\n');
+  } catch (e) {}
+}
+
 export interface LLMConfig {
   ollamaUrl?: string;
   dictationModel?: string;
@@ -24,26 +37,31 @@ export class LLMEngine {
   /**
    * Refines raw voice dictation into polished, publication-ready text.
    */
+  /**
+   * Refines raw voice dictation into polished, publication-ready text.
+   */
   public async cleanDictation(rawTranscript: string, promptOverride?: string): Promise<string> {
     if (!rawTranscript || !rawTranscript.trim()) return '';
 
     const cleanInput = this.deduplicateBlocks(rawTranscript);
 
     const systemPrompt = promptOverride || 
-      `You are a strict speech transcript cleaner and grammar editor. Your ONLY function is to take raw spoken audio transcript text and output pristine, clean text.
+      `You are a strict text cleanup tool. Your ONLY task is to take spoken speech transcripts and output clean, polished text.
 
-MANDATORY RULES:
-1. Output ONLY the cleaned transcript.
-2. ABSOLUTELY ZERO CONVERSATIONAL FILLER or META-TALK: NEVER output introductory phrases such as "Please provide...", "I am ready...", "Here is the cleaned...", "Sure!", "Certainly!", "I can help with that...", or "As an AI...".
-3. DO NOT ANSWER QUESTIONS: If the spoken transcript contains questions (e.g. "How have you been? Did you eat something?"), DO NOT answer them. Simply output the questions cleanly formatted as transcribed text.
-4. DO NOT REPEAT TEXT: Never duplicate sentences, paragraphs, or blocks of text.
-5. PRESERVE ORIGINAL LANGUAGE: Output in the exact language spoken by the user (English, Spanish, Hindi, French, German, etc.).`;
+STRICT RULES:
+1. REMOVE ALL FILLER WORDS AND HESITATIONS: Completely delete words like "um", "uh", "like", "you know", "I mean", "so yeah", and repeated words.
+2. FIX GRAMMAR & PUNCTUATION: Correct typos, capitalization, and sentence punctuation.
+3. OUTPUT ONLY THE FINAL CLEANED TEXT: Do NOT output conversational chatter, explanations, markdown, or quote marks.`;
 
     const userPrompt = `Spoken transcript:\n${cleanInput}`;
 
     try {
+      logLLM(`[Dictation Prompt Sent]\n--- SYSTEM ---\n${systemPrompt}\n--- USER ---\n${userPrompt}`);
       const result = await this.queryOllama(this.dictationModel, systemPrompt, userPrompt, 0.1);
-      return this.sanitizeOutput(result, cleanInput);
+      logLLM(`[Dictation Raw Ollama Response]\n"${result}"`);
+      const sanitized = this.sanitizeOutput(result, cleanInput);
+      logLLM(`[Dictation Sanitized Output]\n"${sanitized}"`);
+      return sanitized;
     } catch (err) {
       console.warn('[LLM] Ollama dictation cleanup failed or timed out. Falling back to raw transcript:', err);
       return this.sanitizeOutput('', cleanInput);
@@ -57,21 +75,19 @@ MANDATORY RULES:
     if (!spokenInstruction || !spokenInstruction.trim()) return selectedText;
 
     const systemPrompt = 
-      `You are Cadence Command Engine, an advanced AI reasoning and generative content assistant. Your task is to process spoken instructions and optional selected text to generate high-value, comprehensive, and expertly crafted output.
-
-Core Guidelines:
-1. ELABORATIVE & THOROUGH: When asked to generate content (e.g. "write a prompt for X", "draft an email", "explain Y", "create a spec", "outline a plan"), produce a complete, rich, highly detailed, and well-structured response. Do NOT produce brief, low-effort, or truncated answers unless explicitly requested to be concise.
-2. TEXT TRANSFORMATION: When target text is provided, execute the instruction (e.g. rewrite, improve tone, summarize, fix code, expand) with maximum precision.
-3. RICH FORMATTING: Use clean markdown headers, bullet points, code blocks, or structured paragraphs appropriate for the task.
-4. STRICT OUTPUT BOUNDARY: Output ONLY the final generated content. DO NOT include conversational filler ("Sure, here is...", "Here you go:"), meta-explanations, or surrounding quote marks.`;
+      `You are a text generation and editing tool operating on the user's behalf. When given an instruction, produce ONLY the final requested text as if the user wrote it themselves. Never present multiple options, never add commentary, tips, or explanations, never use markdown formatting or placeholder brackets — output exactly what should be inserted into the document, nothing else.`;
 
     const userPrompt = selectedText && selectedText.trim()
       ? `Instruction: ${spokenInstruction}\n\nTarget Text:\n${selectedText}`
       : `Instruction: ${spokenInstruction}`;
 
     try {
-      const result = await this.queryOllama(this.commandModel, systemPrompt, userPrompt, 0.4);
-      return this.sanitizeOutput(result, selectedText);
+      logLLM(`[Command Prompt Sent]\n--- SYSTEM ---\n${systemPrompt}\n--- USER ---\n${userPrompt}`);
+      const result = await this.queryOllama(this.commandModel, systemPrompt, userPrompt, 0.2);
+      logLLM(`[Command Raw Ollama Response]\n"${result}"`);
+      const sanitized = this.sanitizeOutput(result, selectedText);
+      logLLM(`[Command Sanitized Output]\n"${sanitized}"`);
+      return sanitized;
     } catch (err) {
       console.warn('[LLM] Ollama command execution failed:', err);
       return selectedText;
@@ -79,14 +95,16 @@ Core Guidelines:
   }
 
   /**
-   * Sanitizes LLM output to strip meta-talk, fix punctuation spacing, and deduplicate repeated blocks.
+   * Sanitizes LLM output to strip meta-talk, markdown syntax, quotes, and preambles.
    */
   private sanitizeOutput(llmResult: string, rawInput: string): string {
     if (!llmResult || !llmResult.trim()) return this.deduplicateBlocks(rawInput.trim());
 
     let cleaned = llmResult.trim();
 
-    // 1. Strip enclosing quotes
+    // 1. Strip code block markers & enclosing quotes
+    cleaned = cleaned.replace(/^```[a-z]*\n?/gi, '').replace(/\n?```$/gi, '').trim();
+
     const quotePairs = [
       ['"', '"'],
       ["'", "'"],
@@ -96,32 +114,37 @@ Core Guidelines:
     ];
 
     for (const [start, end] of quotePairs) {
-      if (cleaned.startsWith(start) && cleaned.endsWith(end) && cleaned.length >= 2) {
+      if (cleaned.startsWith(start) && cleaned.endsWith(end) && cleaned.length >= start.length + end.length) {
         cleaned = cleaned.substring(start.length, cleaned.length - end.length).trim();
       }
     }
 
-    // 2. Remove assistant meta-chatter sentences
+    // 2. Remove assistant meta-chatter sentences & preambles
     const metaPatterns = [
-      /^(Please provide|I am ready|Certainly|Here is|Sure|As an AI|Here's the|I will|Below is|I'm ready|How can I help|What would you like|Feel free to|Let me know|Transform your dictation|Apply my filtering)[^.!?\n]*[.!?\n]+\s*/gi,
-      /^(I understand|Sure thing|Here's your|Here is your|Below is your|This is the)[^.!?\n]*[.!?\n]+\s*/gi
+      /^(Here is the (cleaned|refined|final|transformed) (text|output|dictation|transcript|instruction|email|document):?\s*)/gi,
+      /^(Here's the (cleaned|refined|final|transformed) (text|output|dictation|transcript|instruction|email|document):?\s*)/gi,
+      /^(Sure,?\s*(here is|here's|below is|I have)?\s*)/gi,
+      /^(Certainly,?\s*(here is|here's|below is|I have)?\s*)/gi,
+      /^(Option \d+:?\s*)/gi,
+      /^(Please provide|I am ready|As an AI|Here's the|I will|Below is|I'm ready|How can I help|What would you like)[^.!?\n]*[.!?\n]+\s*/gi,
     ];
 
     for (const pattern of metaPatterns) {
       cleaned = cleaned.replace(pattern, '').trim();
     }
 
-    // 3. Fix missing spaces after punctuation marks (e.g. "while.Please" -> "while. Please")
+    // 3. Strip markdown headers (# ## ###) and bold/italic markup (**text**, *text*, __text__)
+    cleaned = cleaned.replace(/^#+\s+/gm, '');
+    cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1');
+    cleaned = cleaned.replace(/__([^_]+)__/g, '$1');
+
+    // 4. Fix missing spaces after punctuation marks (e.g. "while.Please" -> "while. Please")
     cleaned = cleaned.replace(/([.!?])([A-Za-z])/g, '$1 $2');
 
-    // 4. Deduplicate repeated blocks & sentences
+    // 5. Deduplicate repeated blocks & sentences
     cleaned = this.deduplicateBlocks(cleaned);
 
-    // 5. Fallback safety: If LLM output was pure meta-chatter and became empty, use deduplicated raw input
-    if (!cleaned || cleaned.length < 2) {
-      return this.deduplicateBlocks(rawInput.trim());
-    }
-
+    // 6. Fallback safety
     return cleaned;
   }
 
