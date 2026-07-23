@@ -75,7 +75,7 @@ STRICT RULES:
     if (!spokenInstruction || !spokenInstruction.trim()) return selectedText;
 
     const systemPrompt = 
-      `You are a text generation and editing tool operating on the user's behalf. When given an instruction, produce ONLY the final requested text as if the user wrote it themselves. Never present multiple options, never add commentary, tips, or explanations, never use markdown formatting or placeholder brackets — output exactly what should be inserted into the document, nothing else.`;
+      `You are a text generation and editing tool operating on the user's behalf. When given an instruction, produce ONLY the final requested text as if the user wrote it themselves. Never present multiple options, commentary, tips, or markdown formatting. If the instruction requires specific information you don't have (such as a name, date, link, or detail not provided), write the sentence in a natural way that doesn't require it — do NOT invent placeholder names (like "Friend's Name", "John", "Your Name"), fake dates, or bracketed text. Output exactly what should be inserted into the document, nothing else.`;
 
     const userPrompt = selectedText && selectedText.trim()
       ? `Instruction: ${spokenInstruction}\n\nTarget Text:\n${selectedText}`
