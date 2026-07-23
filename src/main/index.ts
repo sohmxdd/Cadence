@@ -60,6 +60,7 @@ const llmEngine = new LLMEngine({
   dictationModel: settingsConfig?.ollama?.dictationModel,
   commandModel: settingsConfig?.ollama?.commandModel,
   timeoutMs: settingsConfig?.ollama?.timeoutMs,
+  userName: settingsConfig?.userName,
 });
 
 // Audio recording buffer (PCM 16-bit 16kHz)

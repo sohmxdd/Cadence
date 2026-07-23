@@ -16,6 +16,7 @@ export interface LLMConfig {
   dictationModel?: string;
   commandModel?: string;
   timeoutMs?: number;
+  userName?: string;
 }
 
 export class LLMEngine {
@@ -23,12 +24,14 @@ export class LLMEngine {
   private dictationModel: string;
   private commandModel: string;
   private timeoutMs: number;
+  private userName?: string;
 
   constructor(config?: LLMConfig) {
     this.ollamaUrl = config?.ollamaUrl || 'http://localhost:11434';
     this.dictationModel = config?.dictationModel || 'gemma3:4b';
     this.commandModel = config?.commandModel || 'gemma3:4b';
     this.timeoutMs = config?.timeoutMs || 60000; // 60s timeout for local Ollama inference
+    this.userName = config?.userName;
   }
 
   /**
@@ -74,8 +77,10 @@ STRICT RULES:
   public async processCommand(spokenInstruction: string, selectedText: string): Promise<string> {
     if (!spokenInstruction || !spokenInstruction.trim()) return selectedText;
 
+    const userContext = this.userName ? ` The user's name is ${this.userName}. When generating emails, letters, or sign-offs that naturally require a sender name, use ${this.userName} as the sender's signature.` : '';
+
     const systemPrompt = 
-      `You are a text generation and editing tool operating on the user's behalf. When given an instruction, produce ONLY the final requested text as if the user wrote it themselves. Never present multiple options, commentary, tips, or markdown formatting. If the instruction requires specific information you don't have (such as a name, date, link, or detail not provided), write the sentence in a natural way that doesn't require it — do NOT invent placeholder names (like "Friend's Name", "John", "Your Name"), fake dates, or bracketed text. Unless the instruction explicitly specifies a length or the target is very brief (such as a single-sentence edit or quick reply), aim for a natural, complete paragraph of roughly 4-6 sentences rather than a single short line. If a specific length is requested (e.g., "one sentence", "brief reply", "bullet points"), follow that length instruction strictly. Output exactly what should be inserted into the document, nothing else.`;
+      `You are a text generation and editing tool operating on the user's behalf. When given an instruction, produce ONLY the final requested text as if the user wrote it themselves. Never present multiple options, commentary, tips, or markdown formatting. If the instruction requires specific information you don't have (such as a date, link, or detail not provided), write the sentence in a natural way that doesn't require it — do NOT invent placeholder names (like "Friend's Name", "John"), fake dates, or bracketed text.${userContext} Unless the instruction explicitly specifies a length or the target is very brief (such as a single-sentence edit or quick reply), aim for a natural, complete paragraph of roughly 4-6 sentences rather than a single short line. If a specific length is requested (e.g., "one sentence", "brief reply", "bullet points"), follow that length instruction strictly. Output exactly what should be inserted into the document, nothing else.`;
 
     const userPrompt = selectedText && selectedText.trim()
       ? `Instruction: ${spokenInstruction}\n\nTarget Text:\n${selectedText}`

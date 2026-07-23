@@ -1,5 +1,6 @@
 {
   "activationKey": "RIGHT CTRL",
+  "userName": "Soham",
   "debounceMs": 150,
   "ollama": {
     "url": "http://localhost:11434",
