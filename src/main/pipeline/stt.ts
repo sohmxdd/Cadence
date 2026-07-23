@@ -101,12 +101,13 @@ export class STTEngine {
         '-nt',
         '--no-prints',
         '-l', language,
-        '-sns', // Suppress non-speech tokens to prevent repetitions
-        '--vad', // Enable Voice Activity Detection
-        '--no-speech-thold', '0.6', // Reject silent/no-speech segments > 60% prob
+        '-sns',                    // Suppress non-speech tokens (post-pass, light filter)
+        '--no-speech-thold', '0.9', // Only suppress if model is >90% sure there's no speech
+        // NOTE: --vad removed — whisper.cpp's pre-pass VAD misreads real speech from
+        // mic-to-buffer pipeline and silently drops entire segments with no stdout output
       ];
 
-      console.log(`Spawning whisper.cpp with model path: ${this.modelPath}`);
+      console.log(`[STT] Spawning whisper.cpp: ${this.whisperBinaryPath} ${args.join(' ')}`);
       const child = spawn(this.whisperBinaryPath, args);
 
       let stdoutText = '';
@@ -126,11 +127,14 @@ export class STTEngine {
       });
 
       child.on('close', (code) => {
+        if (stderrText.trim()) {
+          console.log(`[STT] whisper.cpp stderr: ${stderrText.trim().substring(0, 300)}`);
+        }
         if (code !== 0) {
-          console.warn(`[STT] Whisper process exited with code ${code}. Stderr: ${stderrText}`);
+          console.warn(`[STT] Whisper process exited with code ${code}.`);
         }
         const cleaned = stdoutText.trim().replace(/\[\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}\.\d{3}\]/g, '').trim();
-        console.log(`whisper.cpp returned: "${cleaned}"`);
+        console.log(`[STT] whisper.cpp stdout result: "${cleaned}"`);
         resolve(cleaned);
       });
     });
