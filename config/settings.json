@@ -3,8 +3,8 @@
   "debounceMs": 150,
   "ollama": {
     "url": "http://localhost:11434",
-    "dictationModel": "gemma3:1b",
-    "commandModel": "gemma3:1b",
+    "dictationModel": "gemma3:4b",
+    "commandModel": "gemma3:4b",
     "timeoutMs": 60000
   },
   "whisper": {

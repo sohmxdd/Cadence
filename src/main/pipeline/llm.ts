@@ -26,8 +26,8 @@ export class LLMEngine {
 
   constructor(config?: LLMConfig) {
     this.ollamaUrl = config?.ollamaUrl || 'http://localhost:11434';
-    this.dictationModel = config?.dictationModel || 'gemma3:1b';
-    this.commandModel = config?.commandModel || 'gemma3:1b';
+    this.dictationModel = config?.dictationModel || 'gemma3:4b';
+    this.commandModel = config?.commandModel || 'gemma3:4b';
     this.timeoutMs = config?.timeoutMs || 60000; // 60s timeout for local Ollama inference
   }
 
