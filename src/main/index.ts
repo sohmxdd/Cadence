@@ -416,10 +416,15 @@ function computeAudioMetrics(pcmChunks: Buffer[]): { durationMs: number; rms: nu
       // 1. Speech to text via whisper.cpp
       const rawTranscript = await sttEngine.transcribe(tempWavPath);
 
-      if (!rawTranscript || !rawTranscript.trim() || rawTranscript.includes('missing')) {
-        logApp(`[STT Output Warning] ${rawTranscript}`);
-        const errLabel = rawTranscript.includes('missing') ? 'Whisper Binary Missing' : 'STT Output Error';
-        updateOverlayState('error', mode, errLabel);
+      if (rawTranscript && rawTranscript.includes('missing')) {
+        logApp(`[STT Binary Missing Error] ${rawTranscript}`);
+        updateOverlayState('error', mode, 'Whisper Binary Missing');
+        return;
+      }
+
+      if (!rawTranscript || !rawTranscript.trim()) {
+        logApp('[STT] No speech recognized in transcript. Hiding overlay.');
+        updateOverlayState('hidden');
         return;
       }
 
