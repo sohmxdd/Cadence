@@ -413,50 +413,65 @@ function computeAudioMetrics(pcmChunks: Buffer[]): { durationMs: number; rms: nu
     let resultText = '';
 
     try {
-      // 1. Speech to text via whisper.cpp
+      // ── Stage 1: Speech-to-Text ────────────────────────────────────────────
+      logApp('[Stage 1/4] STT: Transcribing audio with whisper.cpp...');
       const rawTranscript = await sttEngine.transcribe(tempWavPath);
+      logApp(`[Stage 1/4] STT complete. Raw transcript: "${(rawTranscript || '').substring(0, 120)}"`);
 
       if (rawTranscript && rawTranscript.includes('missing')) {
-        logApp(`[STT Binary Missing Error] ${rawTranscript}`);
+        logApp(`[Stage 1/4] STT binary/model missing error — showing error overlay.`);
         updateOverlayState('error', mode, 'Whisper Binary Missing');
         return;
       }
 
       if (!rawTranscript || !rawTranscript.trim()) {
-        logApp('[STT] No speech recognized in transcript. Hiding overlay.');
+        logApp('[Stage 1/4] STT returned empty transcript — no speech detected, hiding overlay.');
         updateOverlayState('hidden');
         return;
       }
 
-      // 2. Resolve per-app profile prompt override
+      // ── Stage 2: Per-App Profile Resolution ───────────────────────────────
       const appProcess = (cachedFgApp?.processName || '').toLowerCase();
       const profile = profilesConfig.profiles?.[`${appProcess}.exe`] || profilesConfig.profiles?.[appProcess] || profilesConfig.default;
       const promptOverride = profile?.promptOverride;
+      logApp(`[Stage 2/4] Profile resolved for "${appProcess || 'default'}". PromptOverride: ${promptOverride ? 'yes' : 'none'}`);
 
-      // 3. LLM Cleanup / Command execution via Ollama
+      // ── Stage 3: LLM Cleanup / Command Execution via Ollama ───────────────
       try {
         if (mode === 'command') {
-          logApp(`[Executing Command Mode] Instruction: "${rawTranscript}" | Selected Text (${cachedSelectedText.length} chars): "${cachedSelectedText.substring(0, 60)}"`);
+          logApp(`[Stage 3/4] LLM Command mode — Instruction: "${rawTranscript}" | SelectedText (${cachedSelectedText.length} chars): "${cachedSelectedText.substring(0, 60)}"`);
           resultText = await llmEngine.processCommand(rawTranscript, cachedSelectedText);
         } else {
+          logApp(`[Stage 3/4] LLM Dictation mode — sending raw transcript to Ollama for cleanup...`);
           resultText = await llmEngine.cleanDictation(rawTranscript, promptOverride);
         }
+        logApp(`[Stage 3/4] LLM complete. resultText (${resultText?.length ?? 0} chars): "${(resultText || '').substring(0, 120)}"`);
       } catch (llmErr: any) {
-        logApp(`[LLM Connection Error] ${llmErr?.message || llmErr}`);
+        logApp(`[Stage 3/4] LLM call threw: ${llmErr?.message || llmErr}`);
         updateOverlayState('error', mode, 'Ollama Offline');
         return;
       }
 
-      // 4. Inject finalized text — C# helper will restore window focus via stored HWND
+      // ── Stage 4: Text Injection ───────────────────────────────────────────
       if (resultText && resultText.trim()) {
-        logApp(`Injecting text (${resultText.length} chars): "${resultText.substring(0, 80)}${resultText.length > 80 ? '...' : ''}"`);
-        await nativeBridge?.injectText(resultText);
-        updateOverlayState('done', mode);
+        logApp(`[Stage 4/4] Injecting ${resultText.length} chars into foreground window...`);
+        try {
+          await nativeBridge?.injectText(resultText);
+          logApp(`[Stage 4/4] Injection complete — showing done overlay.`);
+          updateOverlayState('done', mode);
+          // Auto-hide after brief done state
+          setTimeout(() => { updateOverlayState('hidden'); }, 1200);
+        } catch (injErr: any) {
+          logApp(`[Stage 4/4] Injection failed: ${injErr?.message || injErr}`);
+          updateOverlayState('error', mode, 'Injection Failed');
+        }
       } else {
-        updateOverlayState('hidden');
+        // LLM returned empty text after sanitization — this is unexpected, show error
+        logApp(`[Stage 4/4] LLM returned empty/blank resultText after sanitization. Raw transcript was: "${rawTranscript}". Showing error overlay.`);
+        updateOverlayState('error', mode, 'No Output');
       }
     } catch (err) {
-      logApp(`[Pipeline Error] ${err}`);
+      logApp(`[Pipeline Error] Unhandled exception in pipeline: ${err}`);
       updateOverlayState('error', mode, 'Pipeline Error');
     } finally {
       try {
@@ -464,11 +479,6 @@ function computeAudioMetrics(pcmChunks: Buffer[]): { durationMs: number; rms: nu
       } catch (e) {}
       isPipelineBusy = false;
     }
-
-    // Hide overlay window after brief delay
-    setTimeout(() => {
-      updateOverlayState('hidden');
-    }, 600);
   });
 
   nativeBridge.on('hotkey-cancel', () => {
